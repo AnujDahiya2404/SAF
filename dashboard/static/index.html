@@ -203,6 +203,20 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
+// The server keeps client state (registered or not) in memory for as long
+// as it runs, keyed only by client_id -- it is NOT reset per page load or
+// per browser tab. A fixed default id would make "publish before
+// registering" silently succeed on every reload after the first, once that
+// id has ever been registered once. Generating a fresh, never-before-seen
+// id per page load is what actually makes the unregistered-client denial
+// demonstrable every time.
+function randomMac(prefix) {
+  const byte = () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase();
+  return `${prefix}:${byte()}:${byte()}:${byte()}`;
+}
+$("pubId").value = randomMac("AA:BB:CC");
+$("subId").value = randomMac("BB:CC:DD");
+
 // ---------------- role/client state ----------------
 const roles = {
   publisher: {clientId: $("pubId").value, registered: false, x:null, k:null, c:null},
@@ -250,49 +264,69 @@ const pulse = $("pulse"), topicTag = $("topicTag"), readout = $("readout");
 const coreL = $("coreL"), coreR = $("coreR");
 const X = {publisher: 10, broker: 50, subscriber: 90};
 
+// Every wire effect (a pulse traveling, or a settle-color flash) is queued
+// and played strictly one at a time, at a deliberately slow, watchable pace
+// -- real round trips (tens of ms) are far faster than the animation, so
+// without this queue a second event's effect starts before the first has
+// visually finished and the two fight over the same pulse/core elements.
+let animQueue = Promise.resolve();
+function enqueue(fn) {
+  animQueue = animQueue.then(fn);
+  return animQueue;
+}
+
+const TRAVEL_MS = 1400, SETTLE_MS = 1600;
+
 function travel(from, to, color, topic) {
-  const x1 = X[from], x2 = X[to];
-  pulse.style.background = color; pulse.style.color = color;
-  pulse.style.boxShadow = `0 0 14px 5px ${color}`;
-  pulse.style.opacity = "1";
-  const core = (from === "broker" && to === "subscriber") || (from === "subscriber" && to === "broker") ? coreR : coreL;
-  core.style.background = color;
-  core.style.boxShadow = `0 0 8px 1px ${color}`;
-  if (topic) {
-    topicTag.textContent = topic;
-    topicTag.style.opacity = "1";
-    topicTag.style.color = color;
-  }
-  const start = performance.now(), dur = 480;
-  function step(t) {
-    const f = Math.min(1, (t - start) / dur);
-    const x = x1 + (x2 - x1) * f;
-    pulse.style.left = x + "%";
-    topicTag.style.left = x + "%";
-    if (f < 1) { requestAnimationFrame(step); }
-    else {
-      pulse.style.opacity = "0";
-      topicTag.style.opacity = "0";
-      core.style.background = "#2a3644";
-      core.style.boxShadow = "none";
+  return enqueue(() => new Promise(resolve => {
+    const x1 = X[from], x2 = X[to];
+    pulse.style.background = color; pulse.style.color = color;
+    pulse.style.boxShadow = `0 0 14px 5px ${color}`;
+    pulse.style.opacity = "1";
+    const core = (from === "broker" && to === "subscriber") || (from === "subscriber" && to === "broker") ? coreR : coreL;
+    core.style.background = color;
+    core.style.boxShadow = `0 0 8px 1px ${color}`;
+    if (topic) {
+      topicTag.textContent = topic;
+      topicTag.style.opacity = "1";
+      topicTag.style.color = color;
     }
-  }
-  requestAnimationFrame(step);
+    const start = performance.now();
+    function step(t) {
+      const f = Math.min(1, (t - start) / TRAVEL_MS);
+      const x = x1 + (x2 - x1) * f;
+      pulse.style.left = x + "%";
+      topicTag.style.left = x + "%";
+      if (f < 1) { requestAnimationFrame(step); }
+      else {
+        pulse.style.opacity = "0";
+        topicTag.style.opacity = "0";
+        core.style.background = "#2a3644";
+        core.style.boxShadow = "none";
+        resolve();
+      }
+    }
+    requestAnimationFrame(step);
+  }));
 }
 
 function settle(link, kind) {
-  const color = kind === "pass" ? "#37d67a" : kind === "gap" ? "#f5a623" : "#ff5468";
-  const core = link === "R" ? coreR : coreL;
-  core.style.background = color;
-  core.style.boxShadow = `0 0 10px 2px ${color}`;
-  setTimeout(() => { core.style.background = "#2a3644"; core.style.boxShadow = "none"; }, 900);
+  return enqueue(() => new Promise(resolve => {
+    const color = kind === "pass" ? "#37d67a" : kind === "gap" ? "#f5a623" : "#ff5468";
+    const core = link === "R" ? coreR : coreL;
+    core.style.background = color;
+    core.style.boxShadow = `0 0 10px 2px ${color}`;
+    setTimeout(() => {
+      core.style.background = "#2a3644"; core.style.boxShadow = "none"; resolve();
+    }, SETTLE_MS);
+  }));
 }
 
 let readoutTimer = null;
 function setReadout(text, cls) {
   readout.innerHTML = cls ? `<span class="v ${cls}">${text}</span>` : text;
   clearTimeout(readoutTimer);
-  if (text) readoutTimer = setTimeout(() => { readout.textContent = selected ? "" : "click a node to begin"; }, 3200);
+  if (text) readoutTimer = setTimeout(() => { readout.textContent = selected ? "" : "click a node to begin"; }, 4500);
 }
 
 // ---------------- sequence diagram ----------------
