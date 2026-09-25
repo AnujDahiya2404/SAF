@@ -203,6 +203,20 @@
 <script>
 const $ = (id) => document.getElementById(id);
 
+// The server keeps client state (registered or not) in memory for as long
+// as it runs, keyed only by client_id -- it is NOT reset per page load or
+// per browser tab. A fixed default id would make "publish before
+// registering" silently succeed on every reload after the first, once that
+// id has ever been registered once. Generating a fresh, never-before-seen
+// id per page load is what actually makes the unregistered-client denial
+// demonstrable every time.
+function randomMac(prefix) {
+  const byte = () => Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase();
+  return `${prefix}:${byte()}:${byte()}:${byte()}`;
+}
+$("pubId").value = randomMac("AA:BB:CC");
+$("subId").value = randomMac("BB:CC:DD");
+
 // ---------------- role/client state ----------------
 const roles = {
   publisher: {clientId: $("pubId").value, registered: false, x:null, k:null, c:null},
