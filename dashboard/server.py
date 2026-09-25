@@ -11,13 +11,14 @@ This dashboard deliberately does not shell out to the Scyther binary: the
 .spdl models in scyther/ are pre-made, static models, not something this
 simulation generates, so "running Scyther" here would just replay a fixed,
 already-documented result (see README.md section 1.3) rather than show
-anything live. What *is* live is the "hardened" toggle on Publish: it
-switches the real client/gateway code between the as-specified alpha
-binding (HMAC_k(x||c) -- the one saf_phase2.spdl finds Niagree/Nisynch
-failing for) and the hardened binding verified all-pass in
-saf_phase2_hardened_final.spdl (HMAC_k(x||c||identifier_msg||t_msg) plus a
-MAC'd broker reply) -- saf/runtime_verifier.py re-derives both, live, from
-the real bytes each exchange actually used.
+anything live. This phase implements the base paper only -- every publish
+and subscribe uses Algorithm 2 exactly as specified (alpha = HMAC_k(x||c)),
+so saf/runtime_verifier.py's live Niagree/Nisynch check correctly and
+reproducibly comes back red on every exchange, matching
+scyther/saf_phase2.spdl's real (static) result. The hardened binding that
+fixes this is documented in README.md section 2 and verified in
+scyther/saf_phase2_hardened_final.spdl, but isn't wired into any running
+code in this phase -- that's SAF-SP extension work.
 
 Run (after `pip install fastapi "uvicorn[standard]"` and starting/allowing
 this to start a local Mosquitto broker on 127.0.0.1:1883):
@@ -138,13 +139,11 @@ class PublishRequest(BaseModel):
     encrypt: bool = False
     tamper: bool = False
     replay: bool = False
-    hardened: bool = False
 
 
 class SubscribeRequest(BaseModel):
     client_id: str
     topic: str = "sensors/demo"
-    hardened: bool = False
 
 
 def _get_or_create_client(client_id: str) -> SAFClient:
@@ -191,7 +190,7 @@ async def api_publish(req: PublishRequest):
                                                "replay -- publish normally (and get Approved) first"}
         status = c.publish(
             req.topic, req.payload.encode("utf-8"), encrypt=req.encrypt,
-            tamper_alpha=req.tamper, replay_identifier=replay_id, hardened=req.hardened,
+            tamper_alpha=req.tamper, replay_identifier=replay_id,
         )
         if status is not None and status.status == "Approved":
             c._last_approved_identifier_msg = status.identifier_msg
@@ -212,7 +211,7 @@ async def api_subscribe(req: SubscribeRequest):
         c = state["clients"].get(req.client_id)
         if c is None or not c.registered:
             return {"ok": False, "error": "client must register (Phase 1) first"}
-        status = c.subscribe(req.topic, hardened=req.hardened)
+        status = c.subscribe(req.topic)
         return {
             "ok": status is not None,
             "status": status.status if status else "TIMEOUT",

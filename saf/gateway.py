@@ -155,10 +155,9 @@ class SAFGateway:
 
     def _handle_session_publish(self, payload: str):
         req = proto.PublishRequest.from_json(payload)
-        result = self._verify_and_approve(req, intent="publish")
-        if result is None:
+        rec = self._verify_and_approve(req, intent="publish")
+        if rec is None:
             return
-        rec, _status_mac_hex = result
 
         # Step 7 (optional): relay the payload to the real application topic
         raw = base64.b64decode(req.payload_b64)
@@ -190,14 +189,14 @@ class SAFGateway:
 
     def _verify_and_approve(self, req, intent: str):
         """Algorithm 2, Steps 3-6, shared by both the publish and subscribe
-        intents. Returns (ClientRecord, status_mac_hex) on Approval, having
-        already recorded the identifier/bumped the counter/sent the status
-        reply; returns None (having already denied and replied) otherwise."""
+        intents. Returns the ClientRecord on Approval, having already
+        recorded the identifier/bumped the counter/sent the status reply;
+        returns None (having already denied and replied) otherwise."""
         rec = self.store.get_client(req.client_id)
         telemetry_bus.publish(
             "gateway", "phase2_request_received", client_id=req.client_id, intent=intent,
             alpha_hex=req.alpha_hex, t_msg=req.t_msg, identifier_msg=req.identifier_msg,
-            topic=req.topic, hardened=req.hardened,
+            topic=req.topic,
             counter_at_broker=(rec.counter if rec is not None else None),
         )
 
@@ -225,16 +224,12 @@ class SAFGateway:
             self._deny(req, "duplicate identifier_msg (replay or unintended duplication)", intent)
             return None
 
-        # Step 5c: verify alpha -- as-specified HMAC_k(x||c), or the hardened
-        # HMAC_k(x||c||identifier_msg||t_msg) if the client requested it (see
-        # crypto_utils.compute_alpha; also protocol.py re: x-vs-client_state).
-        # Captured before bump_counter() below so it reflects the counter
-        # value this exchange actually verified against.
+        # Step 5c: verify alpha = HMAC_k(x||c) (see crypto_utils.compute_alpha;
+        # also protocol.py re: x-vs-client_state). Captured before
+        # bump_counter() below so it reflects the counter value this
+        # exchange actually verified against.
         counter_verified = rec.counter
-        expected_alpha = cu.compute_alpha(
-            rec.session_key, rec.state_hash, counter_verified,
-            hardened=req.hardened, identifier_msg=req.identifier_msg, t_msg=req.t_msg,
-        )
+        expected_alpha = cu.compute_alpha(rec.session_key, rec.state_hash, counter_verified)
         try:
             given_alpha = bytes.fromhex(req.alpha_hex)
         except ValueError:
@@ -254,17 +249,8 @@ class SAFGateway:
         self.store.bump_counter(req.client_id)
         self.store.update_last_session_time(req.client_id, proto.now_iso())
 
-        # Hardened fix #2 (scyther/saf_phase2_hardened_final.spdl): the broker
-        # MACs its own reply, binding it to identifier_msg and to the
-        # Approved/Denied outcome, so an on-path attacker can no longer forge
-        # an unauthenticated status reply.
-        status_mac_hex = None
-        if req.hardened:
-            status_mac_hex = cu.compute_status_mac(rec.session_key, req.identifier_msg, "Approved").hex()
-
         status = proto.VerificationStatus(
-            client_id=req.client_id, identifier_msg=req.identifier_msg,
-            status="Approved", status_mac_hex=status_mac_hex,
+            client_id=req.client_id, identifier_msg=req.identifier_msg, status="Approved",
         )
         self.client.publish(
             proto.TOPIC_SESSION_STATUS_FMT.format(client_id=req.client_id),
@@ -276,9 +262,8 @@ class SAFGateway:
             identifier_msg=req.identifier_msg, alpha_hex=req.alpha_hex, topic=req.topic,
             expected_alpha_hex=expected_alpha.hex(), t_msg=req.t_msg,
             counter_used=counter_verified, state_hash_hex=rec.state_hash.hex(),
-            hardened=req.hardened, status_mac_hex=status_mac_hex,
         )
-        return rec, status_mac_hex
+        return rec
 
     def _deny(self, req, reason: str, intent: str = "publish"):
         status = proto.VerificationStatus(

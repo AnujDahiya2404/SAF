@@ -141,20 +141,12 @@ class SAFClient:
 
     def publish(self, topic: str, payload: bytes, encrypt: bool = False,
                 timeout: float = 5.0, tamper_alpha: bool = False,
-                replay_identifier: str = None, hardened: bool = False) -> "proto.VerificationStatus":
+                replay_identifier: str = None) -> "proto.VerificationStatus":
         """Steps 1-4 (client) then waits for the broker's Step 6 status.
 
         tamper_alpha / replay_identifier are attack-simulation hooks used
         by the tests/attack_*.py scripts -- they let us deliberately send
         a bad HMAC or a reused identifier_msg to verify the broker rejects it.
-
-        hardened selects which alpha binding to use: False (default) is the
-        base paper's Algorithm 2 exactly as specified -- HMAC_k(x||c), the
-        variant scyther/saf_phase2.spdl finds Niagree/Nisynch failing for.
-        True uses the sequence/message-bound binding verified all-pass in
-        scyther/saf_phase2_hardened_final.spdl, and additionally verifies
-        the broker's statusMac on the reply (see crypto_utils.compute_alpha /
-        compute_status_mac).
         """
         if not self.registered:
             raise RuntimeError("client must complete Phase 1 (register()) before publishing")
@@ -165,10 +157,8 @@ class SAFClient:
         t_msg = cu.current_timestamp()
         identifier_msg = replay_identifier or cu.new_message_identifier()
 
-        # Step 4: alpha -- see crypto_utils.compute_alpha for the as-specified
-        # vs. hardened formulas
-        alpha = cu.compute_alpha(self.k, self.x, self.c, hardened=hardened,
-                                  identifier_msg=identifier_msg, t_msg=t_msg)
+        # Step 4: alpha = HMAC_k(x || c)
+        alpha = cu.compute_alpha(self.k, self.x, self.c)
         if tamper_alpha:
             alpha = bytes([alpha[0] ^ 0xFF]) + alpha[1:]  # flip a bit -> invalid HMAC
 
@@ -187,20 +177,19 @@ class SAFClient:
             topic=topic,
             payload_b64=base64.b64encode(body).decode("ascii"),
             encrypted=encrypted_flag,
-            hardened=hardened,
         )
         self._mqtt.publish(proto.TOPIC_SESSION_PUBLISH, req.to_json(), qos=1)
         self.log.info(f"[Phase2] sent publish request topic={topic} "
-                       f"identifier={identifier_msg} encrypted={encrypted_flag} hardened={hardened}")
+                       f"identifier={identifier_msg} encrypted={encrypted_flag}")
         telemetry_bus.publish(
             f"client:{self.client_id}", "phase2_request_sent", client_id=self.client_id,
             alpha_hex=alpha.hex(), t_msg=t_msg, identifier_msg=identifier_msg,
             topic=topic, encrypted=encrypted_flag, counter_used=self.c, intent="publish",
-            tampered=tamper_alpha, replayed=(replay_identifier is not None), hardened=hardened,
+            tampered=tamper_alpha, replayed=(replay_identifier is not None),
         )
-        return self._await_status(identifier_msg, hardened, timeout, intent="publish", topic=topic)
+        return self._await_status(identifier_msg, timeout, intent="publish", topic=topic)
 
-    def subscribe(self, topic: str, timeout: float = 5.0, hardened: bool = False) -> "proto.VerificationStatus":
+    def subscribe(self, topic: str, timeout: float = 5.0) -> "proto.VerificationStatus":
         """The subscribe counterpart of publish(): Section V-A Requirement 1
         and Algorithm 2 Step 2 specify the identical Steps 1-4/5-6 challenge
         for a subscribe intent. Only once the gateway Approves it does this
@@ -213,33 +202,31 @@ class SAFClient:
         level1_info = self.last_session_time or self.session_time
         t_msg = cu.current_timestamp()
         identifier_msg = cu.new_message_identifier()
-        alpha = cu.compute_alpha(self.k, self.x, self.c, hardened=hardened,
-                                  identifier_msg=identifier_msg, t_msg=t_msg)
+        alpha = cu.compute_alpha(self.k, self.x, self.c)
 
         req = proto.SubscribeRequest(
             client_id=self.client_id, alpha_hex=alpha.hex(), t_msg=t_msg,
-            identifier_msg=identifier_msg, level1_info=level1_info, topic=topic, hardened=hardened,
+            identifier_msg=identifier_msg, level1_info=level1_info, topic=topic,
         )
         self._mqtt.publish(proto.TOPIC_SESSION_SUBSCRIBE, req.to_json(), qos=1)
-        self.log.info(f"[Phase2] sent subscribe request topic={topic} "
-                       f"identifier={identifier_msg} hardened={hardened}")
+        self.log.info(f"[Phase2] sent subscribe request topic={topic} identifier={identifier_msg}")
         telemetry_bus.publish(
             f"client:{self.client_id}", "phase2_request_sent", client_id=self.client_id,
             alpha_hex=alpha.hex(), t_msg=t_msg, identifier_msg=identifier_msg,
             topic=topic, encrypted=False, counter_used=self.c, intent="subscribe",
-            tampered=False, replayed=False, hardened=hardened,
+            tampered=False, replayed=False,
         )
-        status = self._await_status(identifier_msg, hardened, timeout, intent="subscribe", topic=topic)
+        status = self._await_status(identifier_msg, timeout, intent="subscribe", topic=topic)
         if status is not None and status.status == "Approved":
             self._mqtt.subscribe(proto.APP_TOPIC_PREFIX + topic, qos=1)
             self.log.info(f"[Phase2] Approved -- now subscribed to app/{topic}")
         return status
 
-    def _await_status(self, identifier_msg: str, hardened: bool, timeout: float,
+    def _await_status(self, identifier_msg: str, timeout: float,
                        intent: str, topic: str) -> "proto.VerificationStatus":
         """Steps 5-6 (client side): wait for the broker's verification
-        status, independently verify its statusMac when hardened, and bump
-        the counter on Approval. Shared by publish() and subscribe()."""
+        status and bump the counter on Approval. Shared by publish() and
+        subscribe()."""
         try:
             status_payload = self._status_q.get(timeout=timeout)
         except queue.Empty:
@@ -249,12 +236,6 @@ class SAFClient:
             return None
 
         status = proto.VerificationStatus.from_json(status_payload)
-        status_mac_valid = None
-        if hardened and status.status_mac_hex is not None:
-            expected_mac = cu.compute_status_mac(self.k, status.identifier_msg, status.status)
-            status_mac_valid = cu.constant_time_eq(expected_mac, bytes.fromhex(status.status_mac_hex))
-            if not status_mac_valid:
-                self.log.warning("[Phase2] broker statusMac did NOT verify -- reply may be forged")
         if status.status == "Approved":
             self.c += 1  # counter increments with each new session/message, mirroring broker
             self.last_session_time = proto.now_iso()
@@ -264,7 +245,6 @@ class SAFClient:
         telemetry_bus.publish(
             f"client:{self.client_id}", "phase2_status_received", client_id=self.client_id,
             identifier_msg=status.identifier_msg, status=status.status, reason=status.reason,
-            hardened=hardened, status_mac_hex=status.status_mac_hex, status_mac_valid=status_mac_valid,
             intent=intent, topic=topic,
         )
         return status

@@ -32,16 +32,23 @@
              background:var(--surface);border:1px solid var(--line-strong);white-space:nowrap;
              opacity:0;pointer-events:none;z-index:6;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 
-  .node{position:absolute;top:50%;transform:translate(-50%,-50%);width:104px;
-        display:flex;flex-direction:column;align-items:center;gap:5px;
-        background:none;border:none;color:var(--text);cursor:pointer;z-index:4;padding:4px}
+  /* .node wraps ONLY .box, so translate(-50%,-50%) centers the box itself
+     on the wire's y=50% line; .meta (label+sub) is positioned absolutely
+     below it and never affects that centering. Previously .box, .lbl and
+     .sub were centered together as one flex column, which put the box's
+     true center well above the wire -- the wire ended up crossing near the
+     box's bottom edge instead of through its middle. */
+  .node{position:absolute;top:50%;transform:translate(-50%,-50%);
+        background:none;border:none;cursor:pointer;z-index:4;padding:0;line-height:0}
   .node[disabled]{cursor:default}
   .node .box{width:72px;height:58px;border-radius:var(--radius);background:var(--surface);
              border:1.5px solid var(--line-strong);display:flex;align-items:center;justify-content:center;
              box-shadow:0 1px 3px rgba(15,23,42,.06);transition:border-color .2s, box-shadow .2s}
   .node.selected .box{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
-  .node .lbl{font-size:12px;font-weight:600}
-  .node .sub{font-size:9.5px;color:var(--dim);font-family:var(--mono)}
+  .node .meta{position:absolute;top:100%;left:50%;transform:translate(-50%,0);
+              margin-top:9px;width:130px;text-align:center;line-height:normal}
+  .node .lbl{font-size:12px;font-weight:600;color:var(--text)}
+  .node .sub{font-size:9.5px;color:var(--dim);font-family:var(--mono);margin-top:2px}
   .node svg{width:32px;height:30px}
 
   .readout{text-align:center;margin-top:0;min-height:20px;font-family:var(--mono);
@@ -99,7 +106,7 @@
   .row{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;min-height:28px;padding:1px 0}
   .arrow{grid-column:1/3;position:relative;font-family:var(--mono);font-size:10.5px;padding:0 8px}
   .arrow.right2{grid-column:2/4}
-  .arrow .line{height:1.5px;background:var(--c,var(--blue));position:relative;margin-top:13px}
+  .arrow .line{height:2px;background:var(--c,var(--blue));position:relative;margin-top:13px}
   .arrow .line::after{content:"";position:absolute;top:-3px;width:0;height:0;
         border-top:4px solid transparent;border-bottom:4px solid transparent}
   .arrow.fwd .line::after{right:0;border-left:7px solid var(--c,var(--blue))}
@@ -125,20 +132,17 @@
 
     <button class="node" id="nodePublisher" data-role="publisher" style="left:10%">
       <div class="box"><svg viewBox="0 0 32 32" fill="none" stroke="#334155" stroke-width="1.6"><rect x="6" y="6" width="20" height="20" rx="3"/><circle cx="16" cy="16" r="5"/><path d="M16 2v4M16 26v4M2 16h4M26 16h4"/></svg></div>
-      <div class="lbl">Publisher</div>
-      <div class="sub" id="pubSub">click to configure</div>
+      <div class="meta"><div class="lbl">Publisher</div><div class="sub" id="pubSub">click to configure</div></div>
     </button>
 
     <button class="node" id="nodeBroker" disabled style="left:50%">
       <div class="box"><svg viewBox="0 0 32 32" fill="none" stroke="#334155" stroke-width="1.6"><rect x="4" y="4" width="24" height="7" rx="1.5"/><rect x="4" y="13" width="24" height="7" rx="1.5"/><rect x="4" y="22" width="24" height="7" rx="1.5"/><circle cx="9" cy="7.5" r="1" fill="#334155"/><circle cx="9" cy="16.5" r="1" fill="#334155"/><circle cx="9" cy="25.5" r="1" fill="#334155"/></svg></div>
-      <div class="lbl">Broker</div>
-      <div class="sub">Gateway + Mosquitto</div>
+      <div class="meta"><div class="lbl">Broker</div><div class="sub">Gateway + Mosquitto</div></div>
     </button>
 
     <button class="node" id="nodeSubscriber" data-role="subscriber" style="left:90%">
       <div class="box"><svg viewBox="0 0 32 32" fill="none" stroke="#334155" stroke-width="1.6"><path d="M8 13a8 8 0 0 1 16 0v6l3 4H5l3-4z"/><path d="M13 26a3 3 0 0 0 6 0"/></svg></div>
-      <div class="lbl">Subscriber</div>
-      <div class="sub" id="subSub">click to configure</div>
+      <div class="meta"><div class="lbl">Subscriber</div><div class="sub" id="subSub">click to configure</div></div>
     </button>
 
     <div class="tap" id="tap">
@@ -164,7 +168,6 @@
     <button class="btn go" id="btnPubRegister">Register</button>
     <input type="text" id="pubTopic" value="sensors/temperature" style="min-width:150px">
     <input type="text" id="pubPayload" value="temp=23.5C" style="min-width:110px">
-    <label class="switch"><input type="checkbox" id="pubHardened"><span class="track-sw"></span>hardened</label>
     <label class="switch"><input type="checkbox" id="pubEncrypt"><span class="track-sw"></span>ascon</label>
     <button class="btn" id="btnPublish">Publish</button>
     <button class="btn warn" id="btnTamper">Tamper</button>
@@ -177,7 +180,6 @@
     <input type="text" id="subId" value="AA:BB:CC:00:22:02">
     <button class="btn go" id="btnSubRegister">Register</button>
     <input type="text" id="subTopic" value="sensors/temperature" style="min-width:150px">
-    <label class="switch"><input type="checkbox" id="subHardened"><span class="track-sw"></span>hardened</label>
     <button class="btn" id="btnSubscribe">Subscribe</button>
     <span class="spacer"></span>
     <span class="pill-result" id="subResult"></span>
@@ -435,13 +437,15 @@ function handleEvent(evt) {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
       if (role && d.status === "Approved") {
+        // Algorithm 2 exactly as specified never binds alpha to
+        // identifier_msg/t_msg, so Niagree/Nisynch always fail here --
+        // this is the live reproduction of scyther/saf_phase2.spdl's real
+        // result, not a bug. See README.md section 2.
         const kind = d.all_pass ? "pass" : "gap";
         settle(role === "subscriber" ? "R" : "L", kind);
-        addArrow("toClient", role, "VerificationStatus",
-          `Approved${d.status_mac_ok !== null ? (d.status_mac_ok ? " ✓statusMac" : " ✗statusMac") : ""}`,
-          kind === "pass" ? "#16a34a" : "#d97706");
+        addArrow("toClient", role, "VerificationStatus", "Approved", kind === "pass" ? "#16a34a" : "#d97706");
         if (selected === role) {
-          setReadout(d.all_pass ? "secure (hardened)" : "niagree/nisynch gap (as specified)", kind);
+          setReadout(d.all_pass ? "secure" : "niagree/nisynch gap (base paper, Algorithm 2)", kind);
         }
       }
       break;
@@ -494,7 +498,7 @@ $("btnPubRegister").onclick = async () => {
 };
 $("btnPublish").onclick = async () => showResult("pubResult", await postJSON("/api/publish", {
   client_id: roles.publisher.clientId, topic: $("pubTopic").value, payload: $("pubPayload").value,
-  encrypt: $("pubEncrypt").checked, hardened: $("pubHardened").checked,
+  encrypt: $("pubEncrypt").checked,
 }));
 $("btnTamper").onclick = async () => showResult("pubResult", await postJSON("/api/publish", {
   client_id: roles.publisher.clientId, topic: $("pubTopic").value, payload: $("pubPayload").value, tamper: true,
@@ -510,7 +514,7 @@ $("btnSubRegister").onclick = async () => {
 $("btnSubscribe").onclick = async () => {
   const topic = $("subTopic").value;
   const json = await postJSON("/api/subscribe", {
-    client_id: roles.subscriber.clientId, topic, hardened: $("subHardened").checked,
+    client_id: roles.subscriber.clientId, topic,
   });
   if (json.ok && json.status === "Approved") roles.subscriber.subscribedTopic = topic;
   showResult("subResult", json);
