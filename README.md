@@ -19,7 +19,14 @@ Stateful Authentication Framework) extension.
   native support for an application-level protocol like SAF (a C plugin would be
   needed to hook into Mosquitto internals; a gateway is the practical alternative).
 - `SAFClient` (`saf/client.py`): plays the "MQTT Client" role — Phase 1 registration,
-  then Phase 2 per-publish authentication.
+  then Phase 2 authentication for **either** a publish (`publish()`) or a subscribe
+  (`subscribe()`). Section V-A Requirement 1 ("Both MQTT publishing clients and MQTT
+  subscribing clients must establish a client state") and Algorithm 2 Step 2 ("The
+  MQTT client initiates a session to either publish data or subscribe to a topic")
+  specify the same Phase 1 + Phase 2 challenge for both roles — an earlier version of
+  this reference implementation only wired up the publish path; subscribe now goes
+  through the identical HMAC challenge (`SAFGateway._verify_and_approve()`, shared by
+  both) before the client's own MQTT connection is allowed to issue a real SUBSCRIBE.
 - `saf/crypto_utils.py`: SHA-256 hashing, HMAC-SHA256, 32-byte session keys, 16-bit
   counters — all per Table V.
 - `saf/ascon_enc.py`: ASCON-128 authenticate-then-encrypt for Algorithm 2 Step 7
@@ -66,23 +73,39 @@ code over a real Mosquitto broker; nothing is mocked, cached across runs, or
 hand-written. See `dashboard/server.py`'s module docstring and `saf/runtime_verifier.py`
 for the full rationale.
 
-- **Wire view**: Client — Broker, drawn as a real cable with a traveling glow pulse
-  per real message, plus five status LEDs on the broker (Secrecy, Alive, Weakagree,
-  Niagree, Nisynch) driven by `saf/runtime_verifier.py`. Green settle = the exchange
-  is fully secure; amber = approved but the Niagree/Nisynch gap applies; red = denied.
-- **Hardened toggle**: this is the one control that changes what the *real* protocol
-  code does, not just how it's displayed. Off, `SAFClient.publish()` sends the
+- **Three-node topology**: Publisher — Broker — Subscriber, each pair joined by a
+  cable with a traveling glow pulse per real message, always animated in the actual
+  direction that message travelled (publisher→broker, broker→publisher,
+  subscriber→broker, and broker→subscriber both for the subscribe handshake reply
+  *and* for real relayed data once subscribed). The topic name rides along with the
+  pulse, visibly in the clear — SAF-SP's privacy pillar is precisely about no longer
+  letting that be true, so the base protocol showing it plainly here is deliberate.
+- **Click a node to configure it.** Selecting Publisher or Subscriber reveals that
+  role's controls (client id, Register, topic, hardened/tamper/replay/subscribe
+  buttons) and drops a **runtime-verifier tap** below that node's link to the broker —
+  drawn as if a probe were physically clipped onto the wire — showing five live LEDs
+  (Secrecy, Alive, Weakagree, Niagree, Nisynch) for that node's own traffic.
+- **Hardened toggle**: the one control that changes what the *real* protocol code
+  does, not just how it's displayed. Off, `SAFClient.publish()`/`subscribe()` send the
   as-specified `alpha = HMAC_k(x||c)` (the exact binding `saf_phase2.spdl` finds
-  Niagree/Nisynch failing for) — every message settles amber. On, it sends the
+  Niagree/Nisynch failing for) — every exchange settles amber. On, they send the
   hardened `alpha = HMAC_k(x||c||identifier_msg||t_msg)` plus a MAC'd broker reply
   (`saf/crypto_utils.compute_alpha` / `compute_status_mac`), the exact binding
-  `saf_phase2_hardened_final.spdl` proves all-pass — every message settles green.
+  `saf_phase2_hardened_final.spdl` proves all-pass — every exchange settles green.
   Phase 1 always settles green (no known live gap; matches `saf_phase1.spdl`'s
   12/12 unbounded result). `saf/runtime_verifier.py` recomputes all of this
-  independently, live, from the real bytes each exchange actually used.
+  independently, live, from the real bytes each exchange actually used — and now
+  covers subscribe exchanges exactly the same way it covers publish ones.
 - **Attack controls**: buttons that drive the *real* `tamper_alpha=True` /
   `replay_identifier=...` hooks already used by `tests/attack_*.py`, so a tampered-HMAC
   or replayed-identifier denial happens live, on the real gateway.
+- **Sequence diagram** (replaces a plain log): three lifelines (Publisher / Broker /
+  Subscriber); every real message becomes an arrow, in the direction it actually
+  travelled, labeled with its real field values (`alpha`, `identifier_msg`, `topic`,
+  ...); Phase 1 completion adds a `store` annotation showing exactly what that
+  client/broker now holds (`x`, `k`, `c`). It's built from the same telemetry stream
+  as the wire animation, just laid out as a scrolling protocol trace instead of a
+  chat-style log.
 
 There's no on-demand "run Scyther" button: the `.spdl` files in `scyther/` are
 pre-made, static models (see §1.3) — not something this dashboard or simulator

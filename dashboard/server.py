@@ -141,6 +141,12 @@ class PublishRequest(BaseModel):
     hardened: bool = False
 
 
+class SubscribeRequest(BaseModel):
+    client_id: str
+    topic: str = "sensors/demo"
+    hardened: bool = False
+
+
 def _get_or_create_client(client_id: str) -> SAFClient:
     c = state["clients"].get(client_id)
     if c is None:
@@ -189,6 +195,24 @@ async def api_publish(req: PublishRequest):
         )
         if status is not None and status.status == "Approved":
             c._last_approved_identifier_msg = status.identifier_msg
+        return {
+            "ok": status is not None,
+            "status": status.status if status else "TIMEOUT",
+            "reason": status.reason if status else "no response from gateway",
+        }
+
+    return await loop.run_in_executor(None, _do)
+
+
+@app.post("/api/subscribe")
+async def api_subscribe(req: SubscribeRequest):
+    loop = asyncio.get_event_loop()
+
+    def _do():
+        c = state["clients"].get(req.client_id)
+        if c is None or not c.registered:
+            return {"ok": False, "error": "client must register (Phase 1) first"}
+        status = c.subscribe(req.topic, hardened=req.hardened)
         return {
             "ok": status is not None,
             "status": status.status if status else "TIMEOUT",

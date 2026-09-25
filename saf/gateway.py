@@ -3,14 +3,22 @@ saf/gateway.py
 
 SAFGateway plays the role of "MQTT Broker" in Algorithms 1 & 2. It is
 itself an MQTT client of a real Mosquitto broker, subscribed to SAF
-control topics. Clients never publish application data directly to the
+control topics. Clients never publish or subscribe directly against the
 shared broker; they must first complete Phase 1 (pre-session) and then
-submit every publish as a Phase-2-authenticated envelope on
-TOPIC_SESSION_PUBLISH. The gateway verifies the envelope and, only if
-valid, republishes the plaintext payload under app/<topic> where normal
-subscribers can receive it. This mirrors Fig. 4 of the paper, where the
-MQTT broker is the central hub enforcing SAF policies before data reaches
-subscribers.
+submit every publish -- and every *subscribe* -- as a Phase-2-authenticated
+envelope. Section V-A, Requirement 1 ("Both MQTT publishing clients and
+MQTT subscribing clients must establish a client state") and Algorithm 2
+Step 2 ("The MQTT client initiates a session to either publish data or
+subscribe to a topic") specify the same challenge gating both actions, so
+_verify_and_approve() below implements Algorithm 2 Steps 3-6 exactly once
+and both _handle_session_publish and _handle_session_subscribe call it.
+Only once a subscribe is Approved does that client's own MQTT connection
+issue a real SUBSCRIBE (see SAFClient.subscribe()); only once a publish is
+Approved does the gateway republish the plaintext payload under
+app/<topic>, where any subscribed (and thus already SAF-approved) client
+receives it via Mosquitto's own normal delivery. This mirrors Fig. 4 of the
+paper, where the MQTT broker is the central hub enforcing SAF policies
+before data reaches subscribers.
 
 This "gateway" pattern is the practical way to layer an application-level
 authentication protocol like SAF onto an unmodified, off-the-shelf broker
@@ -59,6 +67,7 @@ class SAFGateway:
         log.info(f"connected to broker rc={rc}")
         client.subscribe(proto.TOPIC_PRESESSION_REQUEST, qos=1)
         client.subscribe(proto.TOPIC_SESSION_PUBLISH, qos=1)
+        client.subscribe(proto.TOPIC_SESSION_SUBSCRIBE, qos=1)
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -66,6 +75,8 @@ class SAFGateway:
                 self._handle_presession_request(msg.payload.decode("utf-8"))
             elif msg.topic == proto.TOPIC_SESSION_PUBLISH:
                 self._handle_session_publish(msg.payload.decode("utf-8"))
+            elif msg.topic == proto.TOPIC_SESSION_SUBSCRIBE:
+                self._handle_session_subscribe(msg.payload.decode("utf-8"))
         except Exception as e:
             log.exception(f"error handling message on {msg.topic}: {e}")
 
@@ -144,17 +155,55 @@ class SAFGateway:
 
     def _handle_session_publish(self, payload: str):
         req = proto.PublishRequest.from_json(payload)
+        result = self._verify_and_approve(req, intent="publish")
+        if result is None:
+            return
+        rec, _status_mac_hex = result
+
+        # Step 7 (optional): relay the payload to the real application topic
+        raw = base64.b64decode(req.payload_b64)
+        if req.encrypted:
+            try:
+                raw = ascon_decrypt(rec.session_key, raw)
+            except ValueError as e:
+                # authenticated encryption failed -- tampering downstream of the
+                # HMAC check; treat as a security event, do not relay
+                self._log_decision("publish", req.client_id, "TAMPER_DETECTED", str(e))
+                telemetry_bus.publish("gateway", "phase2_tamper_detected",
+                                       client_id=req.client_id, reason=str(e))
+                return
+        app_topic = proto.APP_TOPIC_PREFIX + req.topic
+        self.client.publish(app_topic, raw, qos=1)
+        log.info(f"[Phase2] relayed message from {req.client_id} -> {app_topic} "
+                 f"(identifier={req.identifier_msg})")
+        telemetry_bus.publish("gateway", "phase2_relayed", client_id=req.client_id,
+                               app_topic=app_topic, topic=req.topic, identifier_msg=req.identifier_msg)
+
+    def _handle_session_subscribe(self, payload: str):
+        req = proto.SubscribeRequest.from_json(payload)
+        # Same Algorithm 2 Steps 3-6 challenge as publish (Section V-A
+        # Requirement 1 / Step 2) -- on Approval there is nothing further for
+        # the *gateway* to do: the subscribing client's own MQTT connection
+        # issues the real SUBSCRIBE (SAFClient.subscribe()), and Mosquitto's
+        # normal delivery takes over from there whenever a publish is relayed.
+        self._verify_and_approve(req, intent="subscribe")
+
+    def _verify_and_approve(self, req, intent: str):
+        """Algorithm 2, Steps 3-6, shared by both the publish and subscribe
+        intents. Returns (ClientRecord, status_mac_hex) on Approval, having
+        already recorded the identifier/bumped the counter/sent the status
+        reply; returns None (having already denied and replied) otherwise."""
         rec = self.store.get_client(req.client_id)
         telemetry_bus.publish(
-            "gateway", "phase2_request_received", client_id=req.client_id,
+            "gateway", "phase2_request_received", client_id=req.client_id, intent=intent,
             alpha_hex=req.alpha_hex, t_msg=req.t_msg, identifier_msg=req.identifier_msg,
-            topic=req.topic, encrypted=req.encrypted, hardened=req.hardened,
+            topic=req.topic, hardened=req.hardened,
             counter_at_broker=(rec.counter if rec is not None else None),
         )
 
         if rec is None:
-            self._deny(req, "unregistered client_id (no Phase-1 client-state on file)")
-            return
+            self._deny(req, "unregistered client_id (no Phase-1 client-state on file)", intent)
+            return None
 
         # DoS / anti-spoofing restriction: one active entity per client_id (Sec VI-B)
         # (checked on session initiation; released by caller when done -- for the
@@ -168,34 +217,37 @@ class SAFGateway:
 
         # Step 5a: freshness check on t_msg (anti-replay, Algorithm 2 note / Sec VI-A)
         if not self.store.is_fresh_timestamp(req.t_msg):
-            self._deny(req, "stale timestamp t_msg (possible replay)")
-            return
+            self._deny(req, "stale timestamp t_msg (possible replay)", intent)
+            return None
 
         # Step 5b: identifier_msg uniqueness check (anti-duplication/replay)
         if self.store.is_duplicate_identifier(req.client_id, req.identifier_msg):
-            self._deny(req, "duplicate identifier_msg (replay or unintended duplication)")
-            return
+            self._deny(req, "duplicate identifier_msg (replay or unintended duplication)", intent)
+            return None
 
         # Step 5c: verify alpha -- as-specified HMAC_k(x||c), or the hardened
         # HMAC_k(x||c||identifier_msg||t_msg) if the client requested it (see
-        # crypto_utils.compute_alpha; also protocol.py re: x-vs-client_state)
+        # crypto_utils.compute_alpha; also protocol.py re: x-vs-client_state).
+        # Captured before bump_counter() below so it reflects the counter
+        # value this exchange actually verified against.
+        counter_verified = rec.counter
         expected_alpha = cu.compute_alpha(
-            rec.session_key, rec.state_hash, rec.counter,
+            rec.session_key, rec.state_hash, counter_verified,
             hardened=req.hardened, identifier_msg=req.identifier_msg, t_msg=req.t_msg,
         )
         try:
             given_alpha = bytes.fromhex(req.alpha_hex)
         except ValueError:
-            self._deny(req, "malformed alpha (not valid hex)")
-            return
+            self._deny(req, "malformed alpha (not valid hex)", intent)
+            return None
 
         if not cu.constant_time_eq(expected_alpha, given_alpha):
-            self._deny(req, "HMAC verification failed (integrity/authenticity check failed)")
+            self._deny(req, "HMAC verification failed (integrity/authenticity check failed)", intent)
             telemetry_bus.publish(
-                "gateway", "phase2_hmac_mismatch", client_id=req.client_id,
+                "gateway", "phase2_hmac_mismatch", client_id=req.client_id, intent=intent,
                 expected_alpha_hex=expected_alpha.hex(), given_alpha_hex=given_alpha.hex(),
             )
-            return
+            return None
 
         # Passed all checks -> Approved
         self.store.record_identifier(req.client_id, req.identifier_msg)
@@ -218,35 +270,17 @@ class SAFGateway:
             proto.TOPIC_SESSION_STATUS_FMT.format(client_id=req.client_id),
             status.to_json(), qos=1,
         )
-        self._log_decision("publish", req.client_id, "Approved", None)
+        self._log_decision(intent, req.client_id, "Approved", None)
         telemetry_bus.publish(
-            "gateway", "phase2_approved", client_id=req.client_id,
-            identifier_msg=req.identifier_msg, alpha_hex=req.alpha_hex,
+            "gateway", "phase2_approved", client_id=req.client_id, intent=intent,
+            identifier_msg=req.identifier_msg, alpha_hex=req.alpha_hex, topic=req.topic,
             expected_alpha_hex=expected_alpha.hex(), t_msg=req.t_msg,
-            counter_used=rec.counter, state_hash_hex=rec.state_hash.hex(),
+            counter_used=counter_verified, state_hash_hex=rec.state_hash.hex(),
             hardened=req.hardened, status_mac_hex=status_mac_hex,
         )
+        return rec, status_mac_hex
 
-        # relay the payload to the real application topic
-        raw = base64.b64decode(req.payload_b64)
-        if req.encrypted:
-            try:
-                raw = ascon_decrypt(rec.session_key, raw)
-            except ValueError as e:
-                # authenticated encryption failed -- tampering downstream of the
-                # HMAC check; treat as a security event, do not relay
-                self._log_decision("publish", req.client_id, "TAMPER_DETECTED", str(e))
-                telemetry_bus.publish("gateway", "phase2_tamper_detected",
-                                       client_id=req.client_id, reason=str(e))
-                return
-        app_topic = proto.APP_TOPIC_PREFIX + req.topic
-        self.client.publish(app_topic, raw, qos=1)
-        log.info(f"[Phase2] relayed message from {req.client_id} -> {app_topic} "
-                 f"(identifier={req.identifier_msg})")
-        telemetry_bus.publish("gateway", "phase2_relayed", client_id=req.client_id,
-                               app_topic=app_topic, identifier_msg=req.identifier_msg)
-
-    def _deny(self, req: proto.PublishRequest, reason: str):
+    def _deny(self, req, reason: str, intent: str = "publish"):
         status = proto.VerificationStatus(
             client_id=req.client_id, identifier_msg=req.identifier_msg,
             status="Denied", reason=reason,
@@ -255,9 +289,9 @@ class SAFGateway:
             proto.TOPIC_SESSION_STATUS_FMT.format(client_id=req.client_id),
             status.to_json(), qos=1,
         )
-        log.warning(f"[Phase2] DENIED client_id={req.client_id} reason={reason}")
-        self._log_decision("publish", req.client_id, "Denied", reason)
-        telemetry_bus.publish("gateway", "phase2_denied", client_id=req.client_id,
+        log.warning(f"[Phase2] DENIED client_id={req.client_id} intent={intent} reason={reason}")
+        self._log_decision(intent, req.client_id, "Denied", reason)
+        telemetry_bus.publish("gateway", "phase2_denied", client_id=req.client_id, intent=intent,
                                identifier_msg=req.identifier_msg, reason=reason)
 
     def _log_decision(self, phase, client_id, status, reason):

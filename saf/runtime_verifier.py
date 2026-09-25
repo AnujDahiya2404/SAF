@@ -162,12 +162,17 @@ class RuntimeVerifier:
 
         # Alive / Weakagree: this client's counter/identifier must be fresh,
         # checked independently of the broker's own replay cache (Section
-        # VI-A), directly from what the client actually sent.
+        # VI-A), directly from what the client actually sent. Only an
+        # Approved exchange actually "consumes" a counter/identifier value
+        # -- a rejected attack attempt (tamper/replay) must not poison the
+        # freshness set for the legitimate retry that follows it, since the
+        # counter never advances on a denial (see client.py/gateway.py).
         with self._lock:
             fresh_counter = counter_used not in st.used_counters
-            st.used_counters.add(counter_used)
             id_reused = identifier_msg in st.seen_identifiers
-            st.seen_identifiers.add(identifier_msg)
+            if approved:
+                st.used_counters.add(counter_used)
+                st.seen_identifiers.add(identifier_msg)
         results["Alive"] = fresh_counter and not tampered
         results["Weakagree"] = (not id_reused) and (not replayed)
 
