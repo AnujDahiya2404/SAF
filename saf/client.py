@@ -17,6 +17,7 @@ import paho.mqtt.client as mqtt
 from . import crypto_utils as cu
 from . import protocol as proto
 from .ascon_enc import ascon_encrypt
+from .telemetry import bus as telemetry_bus
 
 def _make_client_logger(client_id: str) -> logging.Logger:
     logger = logging.getLogger(f"saf.client.{client_id}")
@@ -86,12 +87,16 @@ class SAFClient:
         req = proto.PreSessionRequest(client_id=self.client_id, request_time=request_time)
         self._mqtt.publish(proto.TOPIC_PRESESSION_REQUEST, req.to_json(), qos=1)
         self.log.info(f"[Phase1] sent pre-session request, request_time={request_time}")
+        telemetry_bus.publish(f"client:{self.client_id}", "phase1_request_sent",
+                               client_id=self.client_id, request_time=request_time)
 
         try:
             payload = self._presession_q.get(timeout=timeout)
         except queue.Empty:
             self.log.error("[Phase1] timed out waiting for broker response "
                             "(offline registration failed, would repeat per Algorithm 1 else-branch)")
+            telemetry_bus.publish(f"client:{self.client_id}", "phase1_timeout",
+                                   client_id=self.client_id)
             return False
 
         resp = proto.PreSessionResponse.from_json(payload)
@@ -113,6 +118,9 @@ class SAFClient:
         )
         self.log.info(f"[Phase1] client-state established, x={self.x.hex()[:16]}..., "
                        f"k={self.k.hex()[:16]}..., c={self.c}")
+        telemetry_bus.publish(f"client:{self.client_id}", "phase1_established",
+                               client_id=self.client_id, x_hex=self.x.hex(),
+                               k_hex=self.k.hex(), c=self.c, session_time=self.session_time)
         return True
 
     # ---------------------- Phase 2: In-Session (Algorithm 2) ---------------------- #
@@ -159,11 +167,19 @@ class SAFClient:
         self._mqtt.publish(proto.TOPIC_SESSION_PUBLISH, req.to_json(), qos=1)
         self.log.info(f"[Phase2] sent publish request topic={topic} "
                        f"identifier={identifier_msg} encrypted={encrypted_flag}")
+        telemetry_bus.publish(
+            f"client:{self.client_id}", "phase2_request_sent", client_id=self.client_id,
+            alpha_hex=alpha.hex(), t_msg=t_msg, identifier_msg=identifier_msg,
+            topic=topic, encrypted=encrypted_flag, counter_used=self.c,
+            tampered=tamper_alpha, replayed=(replay_identifier is not None),
+        )
 
         try:
             status_payload = self._status_q.get(timeout=timeout)
         except queue.Empty:
             self.log.error("[Phase2] timed out waiting for verification status")
+            telemetry_bus.publish(f"client:{self.client_id}", "phase2_timeout",
+                                   client_id=self.client_id, identifier_msg=identifier_msg)
             return None
 
         status = proto.VerificationStatus.from_json(status_payload)
@@ -173,4 +189,8 @@ class SAFClient:
             self.log.info(f"[Phase2] Approved (identifier={status.identifier_msg})")
         else:
             self.log.warning(f"[Phase2] Denied: {status.reason}")
+        telemetry_bus.publish(
+            f"client:{self.client_id}", "phase2_status_received", client_id=self.client_id,
+            identifier_msg=status.identifier_msg, status=status.status, reason=status.reason,
+        )
         return status

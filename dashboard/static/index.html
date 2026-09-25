@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAF Live Protocol Dashboard</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#121821; --panel2:#0e141b; --border:#233042;
+    --text:#e6edf3; --muted:#8b98a5; --accent:#5aa9ff; --accent2:#7cf5c4;
+    --ok:#3ddc84; --bad:#ff5d6c; --warn:#ffb454; --mono:'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;}
+  header{display:flex;align-items:center;justify-content:space-between;padding:14px 22px;border-bottom:1px solid var(--border);background:var(--panel2);}
+  header h1{font-size:17px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--border);background:var(--panel);}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.on{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.off{background:var(--bad);box-shadow:0 0 8px var(--bad)}
+  #phaseBadge{transition:all .25s ease}
+  .layout{display:grid;grid-template-columns:1.3fr .9fr;gap:16px;padding:16px 22px 40px;max-width:1500px;margin:0 auto;}
+  @media (max-width: 980px){.layout{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px;}
+
+  /* --- topology --- */
+  #topo{width:100%;height:230px;display:block}
+  .node-label{fill:var(--text);font-size:13px;font-weight:600;font-family:inherit}
+  .node-sub{fill:var(--muted);font-size:10px;font-family:var(--mono)}
+  .node-box{fill:var(--panel2);stroke:var(--border);stroke-width:1.5}
+  .node-box.active{stroke:var(--accent);filter:drop-shadow(0 0 6px rgba(90,169,255,.5))}
+  .verifier-box{fill:var(--panel2);stroke:var(--border);stroke-width:1.5}
+  .verifier-box.pass{stroke:var(--ok);filter:drop-shadow(0 0 8px rgba(61,220,132,.55))}
+  .verifier-box.fail{stroke:var(--bad);filter:drop-shadow(0 0 8px rgba(255,93,108,.55))}
+  .link{stroke:var(--border);stroke-width:2}
+  .packet{fill:var(--accent)}
+  .packet.status-ok{fill:var(--ok)}
+  .packet.status-bad{fill:var(--bad)}
+
+  /* --- data panel --- */
+  table.kv{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+  table.kv td{padding:4px 6px;border-bottom:1px solid var(--border);word-break:break-all}
+  table.kv td.k{color:var(--muted);width:130px;white-space:nowrap}
+  .props{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .prop{display:flex;align-items:center;gap:5px;padding:4px 9px;border-radius:6px;font-size:11px;font-family:var(--mono);border:1px solid var(--border);background:var(--panel2)}
+  .prop.pass{color:var(--ok);border-color:rgba(61,220,132,.4)}
+  .prop.fail{color:var(--bad);border-color:rgba(255,93,108,.4)}
+  .gapnote{margin-top:10px;font-size:11.5px;color:var(--muted);line-height:1.5;border-left:2px solid var(--warn);padding:8px 10px;background:rgba(255,180,84,.06);border-radius:0 6px 6px 0}
+
+  /* --- controls --- */
+  .row{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  input[type=text]{background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 10px;font-size:12.5px;font-family:var(--mono);flex:1;min-width:120px}
+  label.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  button{background:var(--panel2);border:1px solid var(--border);color:var(--text);padding:8px 13px;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600;transition:.15s}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.4;cursor:default}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#04121f}
+  button.primary:hover{color:#04121f;filter:brightness(1.08)}
+  button.danger{border-color:rgba(255,93,108,.5);color:var(--bad)}
+  button.danger:hover{border-color:var(--bad)}
+  .result-line{font-family:var(--mono);font-size:11.5px;margin-top:6px;padding:6px 9px;border-radius:6px;background:var(--panel2);border:1px solid var(--border)}
+  .result-line.ok{color:var(--ok)}
+  .result-line.bad{color:var(--bad)}
+
+  /* --- scyther --- */
+  .scyther-btns{display:flex;gap:8px;margin-bottom:10px}
+  .claim{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;padding:3px 0;border-bottom:1px dotted var(--border)}
+  .claim .v.Ok{color:var(--ok)}
+  .claim .v.Fail{color:var(--bad)}
+  .scyther-summary{font-size:12px;margin:4px 0 10px;font-weight:600}
+  .scyther-summary.pass{color:var(--ok)}
+  .scyther-summary.fail{color:var(--warn)}
+  details summary{cursor:pointer;color:var(--muted);font-size:11px;margin-top:8px}
+  pre.raw{white-space:pre-wrap;font-size:10.5px;color:var(--muted);background:var(--panel2);border-radius:6px;padding:8px;max-height:220px;overflow:auto}
+
+  /* --- log --- */
+  #log{height:260px;overflow-y:auto;font-family:var(--mono);font-size:11px;line-height:1.6;background:var(--panel2);border-radius:8px;padding:10px;border:1px solid var(--border)}
+  .le{padding:1px 0}
+  .le .src{color:var(--accent)}
+  .le .src.gw{color:#f0a55f}
+  .le .src.ver{color:#c98bf0}
+  .le .src.sc{color:#ffcf6e}
+  .le .kind{color:var(--muted)}
+  .le .t{color:#4d5c6c;margin-right:6px}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>SAF Live Protocol Dashboard</h1>
+    <div class="sub">Stateful Authentication Framework for MQTT &mdash; every value below is computed live by the real protocol code, over a real broker.</div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span class="pill"><span class="dot" id="wsDot"></span><span id="wsLabel">connecting…</span></span>
+    <span class="pill" id="phaseBadge">IDLE</span>
+  </div>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <h2>Topology &mdash; Client / Runtime Verifier / Broker</h2>
+      <svg id="topo" viewBox="0 0 900 230"></svg>
+    </div>
+
+    <div class="card">
+      <h2>Controls</h2>
+      <div class="row">
+        <input type="text" id="clientId" value="AA:BB:CC:00:11:01" title="client_id (MAC-style identifier)">
+        <button class="primary" id="btnRegister">Register &middot; Phase 1</button>
+      </div>
+      <div class="row">
+        <input type="text" id="topic" value="sensors/temperature" placeholder="topic">
+        <input type="text" id="payload" value="temp=23.5C" placeholder="payload">
+        <label class="chk"><input type="checkbox" id="encrypt"> ASCON-encrypt</label>
+      </div>
+      <div class="row">
+        <button id="btnPublish">Publish &middot; Phase 2</button>
+        <button class="danger" id="btnTamper">Simulate Tamper Attack</button>
+        <button class="danger" id="btnReplay">Simulate Replay Attack</button>
+      </div>
+      <div id="ctrlResult"></div>
+    </div>
+
+    <div class="card">
+      <h2>Live Event Log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Live Message Data (last exchange)</h2>
+      <table class="kv" id="dataTable">
+        <tr><td class="k">client_id</td><td>&mdash;</td></tr>
+        <tr><td class="k">x = h(client_state)</td><td>&mdash;</td></tr>
+        <tr><td class="k">k (session key)</td><td>&mdash;</td></tr>
+        <tr><td class="k">c (counter)</td><td>&mdash;</td></tr>
+        <tr><td class="k">alpha = HMAC_k(x‖c)</td><td>&mdash;</td></tr>
+        <tr><td class="k">identifier_msg</td><td>&mdash;</td></tr>
+        <tr><td class="k">t_msg</td><td>&mdash;</td></tr>
+      </table>
+
+      <h2 style="margin-top:18px">Scyther Node &mdash; Live Runtime Verdict</h2>
+      <div class="props" id="propBox"></div>
+      <div class="gapnote" id="gapNote">Waiting for a Phase-2 exchange to verify live…</div>
+      <table class="kv" style="margin-top:8px">
+        <tr><td class="k">alpha (as sent)</td><td id="alphaSent">&mdash;</td></tr>
+        <tr><td class="k">alpha_hardened</td><td id="alphaHardened">&mdash;</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Static Verification &mdash; Scyther (unbounded, run on demand)</h2>
+      <div class="scyther-btns">
+        <button data-model="phase1">Phase 1</button>
+        <button data-model="phase2">Phase 2 (as specified)</button>
+        <button data-model="phase2_hardened">Phase 2 (hardened)</button>
+      </div>
+      <div id="scytherOut" class="sub">Pick a model to run the real scyther binary against its .spdl file.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const svgNS = "http://www.w3.org/2000/svg";
+
+// ---------------- topology drawing ----------------
+const topo = $("topo");
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(svgNS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || topo).appendChild(e);
+  return e;
+}
+topo.innerHTML = "";
+el("line", {x1:150,y1:115,x2:750,y2:115, class:"link"});
+const clientBox = el("rect", {x:20,y:75,width:150,height:80,rx:10, class:"node-box", id:"clientBox"});
+el("text", {x:95,y:110,"text-anchor":"middle", class:"node-label"}, ).textContent="MQTT Client";
+el("text", {x:95,y:128,"text-anchor":"middle", class:"node-sub"}).textContent="SAFClient";
+const verifierBox = el("rect", {x:375,y:60,width:150,height:110,rx:10, class:"verifier-box", id:"verifierBox"});
+el("text", {x:450,y:100,"text-anchor":"middle", class:"node-label"}).textContent="Runtime";
+el("text", {x:450,y:116,"text-anchor":"middle", class:"node-label"}).textContent="Verifier";
+el("text", {x:450,y:134,"text-anchor":"middle", class:"node-sub"}).textContent="(Scyther-checked";
+el("text", {x:450,y:146,"text-anchor":"middle", class:"node-sub"}).textContent="properties, live)";
+const brokerBox = el("rect", {x:730,y:75,width:150,height:80,rx:10, class:"node-box", id:"brokerBox"});
+el("text", {x:805,y:105,"text-anchor":"middle", class:"node-label"}).textContent="SAF Gateway";
+el("text", {x:805,y:122,"text-anchor":"middle", class:"node-sub"}).textContent="+ Mosquitto";
+el("text", {x:805,y:135,"text-anchor":"middle", class:"node-sub"}).textContent="broker";
+
+function pulseNode(idBox) {
+  const b = $(idBox);
+  b.classList.add("active");
+  setTimeout(() => b.classList.remove("active"), 500);
+}
+function markVerifier(pass) {
+  verifierBox.classList.remove("pass","fail");
+  verifierBox.classList.add(pass ? "pass" : "fail");
+  setTimeout(() => verifierBox.classList.remove("pass","fail"), 1400);
+}
+function firePacket(x1, x2, ok) {
+  const p = el("circle", {cx:x1, cy:115, r:7, class:"packet" + (ok===true?" status-ok":ok===false?" status-bad":"")});
+  const start = performance.now(), dur = 550;
+  function step(t) {
+    const f = Math.min(1, (t-start)/dur);
+    p.setAttribute("cx", x1 + (x2-x1)*f);
+    if (f < 1) requestAnimationFrame(step); else p.remove();
+  }
+  requestAnimationFrame(step);
+}
+function animateClientToBroker(ok) { firePacket(170, 730, ok); }
+function animateBrokerToClient(ok) { firePacket(730, 170, ok); }
+
+// ---------------- phase badge ----------------
+let phaseTimer = null;
+function setPhase(text, cls) {
+  const b = $("phaseBadge");
+  b.textContent = text;
+  b.style.color = cls === "warn" ? "var(--warn)" : cls === "ok" ? "var(--ok)" : cls === "bad" ? "var(--bad)" : "var(--text)";
+  clearTimeout(phaseTimer);
+  if (text !== "IDLE") phaseTimer = setTimeout(() => setPhase("IDLE"), 3000);
+}
+
+// ---------------- data panel ----------------
+function setDataRow(idx, val) {
+  const rows = $("dataTable").rows;
+  rows[idx].cells[1].textContent = val;
+}
+function truncHex(h, n=24) { return h && h.length > n ? h.slice(0,n) + "…" : h; }
+
+function renderVerifierVerdict(d) {
+  const box = $("propBox");
+  box.innerHTML = "";
+  for (const [name, pass] of Object.entries(d.properties)) {
+    const s = document.createElement("span");
+    s.className = "prop " + (pass ? "pass" : "fail");
+    s.textContent = (pass ? "✓ " : "✗ ") + name;
+    box.appendChild(s);
+  }
+  $("gapNote").textContent = d.gap_reference || "";
+  $("alphaSent").textContent = d.alpha_hex;
+  $("alphaHardened").textContent = d.hardened_alpha_hex;
+  markVerifier(d.all_pass);
+}
+
+// ---------------- log ----------------
+function srcClass(source) {
+  if (source.startsWith("client")) return "";
+  if (source === "gateway") return "gw";
+  if (source === "verifier") return "ver";
+  if (source === "scyther") return "sc";
+  return "";
+}
+function appendLog(evt) {
+  const line = document.createElement("div");
+  line.className = "le";
+  const t = new Date(evt.ts * 1000).toLocaleTimeString();
+  line.innerHTML = `<span class="t">${t}</span><span class="src ${srcClass(evt.source)}">[${evt.source}]</span> <span class="kind">${evt.kind}</span>`;
+  const logDiv = $("log");
+  logDiv.appendChild(line);
+  if (logDiv.children.length > 500) logDiv.removeChild(logDiv.firstChild);
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+
+// ---------------- event handling ----------------
+function handleEvent(evt) {
+  appendLog(evt);
+  const d = evt.data || {};
+  switch (evt.kind) {
+    case "phase1_request_sent":
+      setPhase("PHASE 1 · PRE-SESSION", "warn");
+      pulseNode("clientBox");
+      animateClientToBroker();
+      setDataRow(0, d.client_id);
+      break;
+    case "phase1_established":
+      if (evt.source.startsWith("client")) {
+        pulseNode("brokerBox");
+        animateBrokerToClient(true);
+        setDataRow(0, d.client_id);
+        setDataRow(1, truncHex(d.x_hex, 40));
+        setDataRow(2, truncHex(d.k_hex, 40));
+        setDataRow(3, d.c);
+      }
+      break;
+    case "phase2_request_sent":
+      setPhase("PHASE 2 · IN-SESSION AUTH", "warn");
+      pulseNode("clientBox");
+      animateClientToBroker();
+      setDataRow(0, d.client_id);
+      setDataRow(4, truncHex(d.alpha_hex, 40));
+      setDataRow(5, d.identifier_msg);
+      setDataRow(6, d.t_msg);
+      break;
+    case "verifier_check":
+      renderVerifierVerdict(d);
+      break;
+    case "phase2_approved":
+      pulseNode("brokerBox");
+      animateBrokerToClient(true);
+      setPhase("APPROVED", "ok");
+      break;
+    case "phase2_denied":
+      pulseNode("brokerBox");
+      animateBrokerToClient(false);
+      setPhase("DENIED: " + (d.reason || ""), "bad");
+      break;
+    case "phase2_tamper_detected":
+      setPhase("TAMPER DETECTED (post-HMAC)", "bad");
+      break;
+  }
+}
+
+// ---------------- websocket ----------------
+function connectWS() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  ws.onopen = () => { $("wsDot").className = "dot on"; $("wsLabel").textContent = "live"; };
+  ws.onclose = () => { $("wsDot").className = "dot off"; $("wsLabel").textContent = "disconnected — retrying…"; setTimeout(connectWS, 1500); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (msg) => {
+    const payload = JSON.parse(msg.data);
+    if (payload.kind === "backlog") {
+      payload.events.slice(-40).forEach(handleEvent);
+    } else {
+      handleEvent(payload);
+    }
+  };
+}
+connectWS();
+
+// ---------------- REST controls ----------------
+async function postJSON(url, body) {
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  return r.json();
+}
+function showResult(json) {
+  const el = $("ctrlResult");
+  const ok = json.ok && json.status !== "Denied";
+  el.innerHTML = `<div class="result-line ${json.ok ? (json.status==="Denied"?"bad":"ok") : "bad"}">${JSON.stringify(json)}</div>`;
+}
+
+$("btnRegister").onclick = async () => {
+  $("btnRegister").disabled = true;
+  const json = await postJSON("/api/register", {client_id: $("clientId").value});
+  showResult(json);
+  $("btnRegister").disabled = false;
+};
+$("btnPublish").onclick = async () => {
+  const json = await postJSON("/api/publish", {
+    client_id: $("clientId").value, topic: $("topic").value,
+    payload: $("payload").value, encrypt: $("encrypt").checked,
+  });
+  showResult(json);
+};
+$("btnTamper").onclick = async () => {
+  const json = await postJSON("/api/publish", {
+    client_id: $("clientId").value, topic: $("topic").value,
+    payload: $("payload").value, tamper: true,
+  });
+  showResult(json);
+};
+$("btnReplay").onclick = async () => {
+  const json = await postJSON("/api/publish", {
+    client_id: $("clientId").value, topic: $("topic").value,
+    payload: $("payload").value, replay: true,
+  });
+  showResult(json);
+};
+
+document.querySelectorAll(".scyther-btns button").forEach(btn => {
+  btn.onclick = async () => {
+    const model = btn.dataset.model;
+    const out = $("scytherOut");
+    out.innerHTML = `Running scyther --unbounded on ${model}.spdl …`;
+    btn.disabled = true;
+    try {
+      const r = await fetch(`/api/scyther/${model}`);
+      const json = await r.json();
+      if (!json.ok) { out.innerHTML = `<span style="color:var(--bad)">${json.error}</span>`; return; }
+      let html = `<div class="scyther-summary ${json.all_pass ? "pass":"fail"}">${json.all_pass ? "ALL CLAIMS PASS" : "SOME CLAIMS FAIL"} &middot; ${json.duration_seconds}s &middot; ${json.spdl_file}</div>`;
+      json.claims.forEach(c => {
+        html += `<div class="claim"><span>${c.protocol}, ${c.role} &middot; ${c.claim_id}</span><span class="v ${c.verdict}">${c.verdict} (${c.comment})</span></div>`;
+      });
+      html += `<details><summary>raw scyther output</summary><pre class="raw">${json.raw_output.replace(/\x1b\[[0-9;]*m/g,"")}</pre></details>`;
+      out.innerHTML = html;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+});
+</script>
+</body>
+</html>
