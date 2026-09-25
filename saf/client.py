@@ -2,8 +2,14 @@
 saf/client.py
 
 SAFClient plays the role of "MQTT Client" in Algorithms 1 & 2: it performs
-the Phase-1 pre-session handshake, then wraps every application publish in
-a Phase-2-authenticated envelope sent to the SAF gateway.
+the Phase-1 pre-session handshake, then wraps every application publish --
+and every subscribe -- in a Phase-2-authenticated envelope sent to the SAF
+gateway. Section V-A Requirement 1 ("Both MQTT publishing clients and MQTT
+subscribing clients must establish a client state") and Algorithm 2 Step 2
+("The MQTT client initiates a session to either publish data or subscribe
+to a topic") specify the same challenge for both, so publish() and
+subscribe() below share _await_status() for Steps 5-6. A subscribe only
+issues a real MQTT SUBSCRIBE once the gateway has Approved it.
 """
 
 import base64
@@ -73,11 +79,19 @@ class SAFClient:
         )
 
     def _on_message(self, client, userdata, msg):
-        payload = msg.payload.decode("utf-8")
         if msg.topic == proto.TOPIC_PRESESSION_RESPONSE_FMT.format(client_id=self.client_id):
-            self._presession_q.put(payload)
+            self._presession_q.put(msg.payload.decode("utf-8"))
         elif msg.topic == proto.TOPIC_SESSION_STATUS_FMT.format(client_id=self.client_id):
-            self._status_q.put(payload)
+            self._status_q.put(msg.payload.decode("utf-8"))
+        elif msg.topic.startswith(proto.APP_TOPIC_PREFIX):
+            # relayed application data on a topic this client was SAF-approved
+            # to subscribe to (see subscribe()) -- delivered here by Mosquitto's
+            # own normal pub/sub routing, no further SAF involvement needed.
+            topic = msg.topic[len(proto.APP_TOPIC_PREFIX):]
+            self.log.info(f"[App] received on {msg.topic}: {msg.payload!r}")
+            telemetry_bus.publish(f"client:{self.client_id}", "app_message_received",
+                                   client_id=self.client_id, topic=topic,
+                                   payload_b64=base64.b64encode(msg.payload).decode("ascii"))
 
     # ---------------------- Phase 1: Pre-Session (Algorithm 1) ---------------------- #
 
@@ -181,16 +195,57 @@ class SAFClient:
         telemetry_bus.publish(
             f"client:{self.client_id}", "phase2_request_sent", client_id=self.client_id,
             alpha_hex=alpha.hex(), t_msg=t_msg, identifier_msg=identifier_msg,
-            topic=topic, encrypted=encrypted_flag, counter_used=self.c,
+            topic=topic, encrypted=encrypted_flag, counter_used=self.c, intent="publish",
             tampered=tamper_alpha, replayed=(replay_identifier is not None), hardened=hardened,
         )
+        return self._await_status(identifier_msg, hardened, timeout, intent="publish", topic=topic)
 
+    def subscribe(self, topic: str, timeout: float = 5.0, hardened: bool = False) -> "proto.VerificationStatus":
+        """The subscribe counterpart of publish(): Section V-A Requirement 1
+        and Algorithm 2 Step 2 specify the identical Steps 1-4/5-6 challenge
+        for a subscribe intent. Only once the gateway Approves it does this
+        client's own MQTT connection issue a real SUBSCRIBE for app/<topic>;
+        Mosquitto's normal delivery then routes any future relayed publish on
+        that topic straight to _on_message() -> "app_message_received"."""
+        if not self.registered:
+            raise RuntimeError("client must complete Phase 1 (register()) before subscribing")
+
+        level1_info = self.last_session_time or self.session_time
+        t_msg = cu.current_timestamp()
+        identifier_msg = cu.new_message_identifier()
+        alpha = cu.compute_alpha(self.k, self.x, self.c, hardened=hardened,
+                                  identifier_msg=identifier_msg, t_msg=t_msg)
+
+        req = proto.SubscribeRequest(
+            client_id=self.client_id, alpha_hex=alpha.hex(), t_msg=t_msg,
+            identifier_msg=identifier_msg, level1_info=level1_info, topic=topic, hardened=hardened,
+        )
+        self._mqtt.publish(proto.TOPIC_SESSION_SUBSCRIBE, req.to_json(), qos=1)
+        self.log.info(f"[Phase2] sent subscribe request topic={topic} "
+                       f"identifier={identifier_msg} hardened={hardened}")
+        telemetry_bus.publish(
+            f"client:{self.client_id}", "phase2_request_sent", client_id=self.client_id,
+            alpha_hex=alpha.hex(), t_msg=t_msg, identifier_msg=identifier_msg,
+            topic=topic, encrypted=False, counter_used=self.c, intent="subscribe",
+            tampered=False, replayed=False, hardened=hardened,
+        )
+        status = self._await_status(identifier_msg, hardened, timeout, intent="subscribe", topic=topic)
+        if status is not None and status.status == "Approved":
+            self._mqtt.subscribe(proto.APP_TOPIC_PREFIX + topic, qos=1)
+            self.log.info(f"[Phase2] Approved -- now subscribed to app/{topic}")
+        return status
+
+    def _await_status(self, identifier_msg: str, hardened: bool, timeout: float,
+                       intent: str, topic: str) -> "proto.VerificationStatus":
+        """Steps 5-6 (client side): wait for the broker's verification
+        status, independently verify its statusMac when hardened, and bump
+        the counter on Approval. Shared by publish() and subscribe()."""
         try:
             status_payload = self._status_q.get(timeout=timeout)
         except queue.Empty:
             self.log.error("[Phase2] timed out waiting for verification status")
             telemetry_bus.publish(f"client:{self.client_id}", "phase2_timeout",
-                                   client_id=self.client_id, identifier_msg=identifier_msg)
+                                   client_id=self.client_id, identifier_msg=identifier_msg, intent=intent)
             return None
 
         status = proto.VerificationStatus.from_json(status_payload)
@@ -210,5 +265,6 @@ class SAFClient:
             f"client:{self.client_id}", "phase2_status_received", client_id=self.client_id,
             identifier_msg=status.identifier_msg, status=status.status, reason=status.reason,
             hardened=hardened, status_mac_hex=status.status_mac_hex, status_mac_valid=status_mac_valid,
+            intent=intent, topic=topic,
         )
         return status

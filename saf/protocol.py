@@ -121,6 +121,33 @@ class PublishRequest:
 
 
 @dataclass
+class SubscribeRequest:
+    """Algorithm 2, Steps 1-4, for the subscribe intent: Section V-A
+    Requirement 1 ("Both MQTT publishing clients and MQTT subscribing
+    clients must establish a client state with the MQTT broker") and
+    Algorithm 2 Step 2 ("The MQTT client initiates a session to either
+    publish data or subscribe to a topic") specify the *same* session-
+    authentication challenge gating either action -- this mirrors
+    PublishRequest exactly, minus the fields that only make sense for an
+    outgoing payload (payload_b64/encrypted)."""
+    client_id: str
+    alpha_hex: str
+    t_msg: float
+    identifier_msg: str
+    level1_info: str
+    topic: str               # the topic the client wants to subscribe to
+    hardened: bool = False
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
+
+    @staticmethod
+    def from_json(payload: str) -> "SubscribeRequest":
+        d = json.loads(payload)
+        return SubscribeRequest(**d)
+
+
+@dataclass
 class VerificationStatus:
     """Algorithm 2, Step 6."""
     client_id: str
@@ -147,6 +174,7 @@ class VerificationStatus:
 TOPIC_PRESESSION_REQUEST = "saf/presession/request"
 TOPIC_PRESESSION_RESPONSE_FMT = "saf/presession/response/{client_id}"
 TOPIC_SESSION_PUBLISH = "saf/session/publish"
+TOPIC_SESSION_SUBSCRIBE = "saf/session/subscribe"
 TOPIC_SESSION_STATUS_FMT = "saf/session/status/{client_id}"
 APP_TOPIC_PREFIX = "app/"  # authenticated payloads are relayed under app/<topic>
 
