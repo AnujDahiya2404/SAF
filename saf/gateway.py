@@ -28,6 +28,7 @@ from . import crypto_utils as cu
 from . import protocol as proto
 from .state_store import SAFStateStore
 from .ascon_enc import ascon_decrypt
+from .telemetry import bus as telemetry_bus
 
 logging.basicConfig(level=logging.INFO, format="[GATEWAY] %(message)s")
 log = logging.getLogger("saf.gateway")
@@ -74,17 +75,23 @@ class SAFGateway:
         req = proto.PreSessionRequest.from_json(payload)
         log.info(f"[Phase1] pre-session request from client_id={req.client_id!r} "
                  f"request_time={req.request_time}")
+        telemetry_bus.publish("gateway", "phase1_request_received",
+                               client_id=req.client_id, request_time=req.request_time)
 
         # Step 2: verify client_id. In this reference implementation, "verification"
         # means the client_id is well-formed and registration is currently allowed
         # (rate-limiting / DoS restriction policies, Section V-B).
         if not self._verify_client_id(req.client_id):
             self._log_decision("presession", req.client_id, "DENIED", "invalid client_id")
+            telemetry_bus.publish("gateway", "phase1_denied",
+                                   client_id=req.client_id, reason="invalid client_id")
             return
 
         if not self.store.registration_allowed():
             self._log_decision("presession", req.client_id, "DENIED",
                                 "registration blocked (rate limit / max clients)")
+            telemetry_bus.publish("gateway", "phase1_denied", client_id=req.client_id,
+                                   reason="registration blocked (rate limit / max clients)")
             return
 
         # Step 3: broker creates client_state = (session_time, estimated_duration)
@@ -119,6 +126,11 @@ class SAFGateway:
         self.client.publish(topic, resp.to_json(), qos=1)
         log.info(f"[Phase1] client-state established for {req.client_id}; sent y=x||k||c")
         self._log_decision("presession", req.client_id, "ESTABLISHED", None)
+        telemetry_bus.publish(
+            "gateway", "phase1_established", client_id=req.client_id,
+            x_hex=x.hex(), k_hex=k.hex(), c=c, session_time=session_time,
+            estimated_duration=estimated_duration,
+        )
 
     def _verify_client_id(self, client_id: str) -> bool:
         # In a production deployment this step would check the client_id
@@ -133,6 +145,12 @@ class SAFGateway:
     def _handle_session_publish(self, payload: str):
         req = proto.PublishRequest.from_json(payload)
         rec = self.store.get_client(req.client_id)
+        telemetry_bus.publish(
+            "gateway", "phase2_request_received", client_id=req.client_id,
+            alpha_hex=req.alpha_hex, t_msg=req.t_msg, identifier_msg=req.identifier_msg,
+            topic=req.topic, encrypted=req.encrypted,
+            counter_at_broker=(rec.counter if rec is not None else None),
+        )
 
         if rec is None:
             self._deny(req, "unregistered client_id (no Phase-1 client-state on file)")
@@ -171,6 +189,10 @@ class SAFGateway:
 
         if not cu.constant_time_eq(expected_alpha, given_alpha):
             self._deny(req, "HMAC verification failed (integrity/authenticity check failed)")
+            telemetry_bus.publish(
+                "gateway", "phase2_hmac_mismatch", client_id=req.client_id,
+                expected_alpha_hex=expected_alpha.hex(), given_alpha_hex=given_alpha.hex(),
+            )
             return
 
         # Passed all checks -> Approved
@@ -187,6 +209,12 @@ class SAFGateway:
             status.to_json(), qos=1,
         )
         self._log_decision("publish", req.client_id, "Approved", None)
+        telemetry_bus.publish(
+            "gateway", "phase2_approved", client_id=req.client_id,
+            identifier_msg=req.identifier_msg, alpha_hex=req.alpha_hex,
+            expected_alpha_hex=expected_alpha.hex(), t_msg=req.t_msg,
+            counter_used=rec.counter, state_hash_hex=rec.state_hash.hex(),
+        )
 
         # relay the payload to the real application topic
         raw = base64.b64decode(req.payload_b64)
@@ -197,11 +225,15 @@ class SAFGateway:
                 # authenticated encryption failed -- tampering downstream of the
                 # HMAC check; treat as a security event, do not relay
                 self._log_decision("publish", req.client_id, "TAMPER_DETECTED", str(e))
+                telemetry_bus.publish("gateway", "phase2_tamper_detected",
+                                       client_id=req.client_id, reason=str(e))
                 return
         app_topic = proto.APP_TOPIC_PREFIX + req.topic
         self.client.publish(app_topic, raw, qos=1)
         log.info(f"[Phase2] relayed message from {req.client_id} -> {app_topic} "
                  f"(identifier={req.identifier_msg})")
+        telemetry_bus.publish("gateway", "phase2_relayed", client_id=req.client_id,
+                               app_topic=app_topic, identifier_msg=req.identifier_msg)
 
     def _deny(self, req: proto.PublishRequest, reason: str):
         status = proto.VerificationStatus(
@@ -214,6 +246,8 @@ class SAFGateway:
         )
         log.warning(f"[Phase2] DENIED client_id={req.client_id} reason={reason}")
         self._log_decision("publish", req.client_id, "Denied", reason)
+        telemetry_bus.publish("gateway", "phase2_denied", client_id=req.client_id,
+                               identifier_msg=req.identifier_msg, reason=reason)
 
     def _log_decision(self, phase, client_id, status, reason):
         self.decision_log.append({

@@ -28,11 +28,15 @@ source venv/bin/activate
 
 echo "[setup] Installing Python dependencies"
 pip install --upgrade pip -q
-pip install paho-mqtt ascon numpy scipy -q
+pip install -r requirements.txt -q
 
 echo ""
 echo "=== Setup complete ==="
 echo "Activate the environment in future shells with:"
 echo "    source venv/bin/activate"
 echo ""
-echo "Next: run ./run_all.sh to start the broker and run all tests."
+echo "Next:"
+echo "    ./run_all.sh                        -- broker + demo + attack tests (CLI)"
+echo "    python3 -m dashboard.server          -- live protocol dashboard, http://127.0.0.1:8000"
+echo "    python3 -m simulator.netsim          -- multi-client network simulation"
+echo "    python3 -m simulator.report <run-dir> -- turn a simulation run into report figures"
