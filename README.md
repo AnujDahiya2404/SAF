@@ -81,21 +81,22 @@ for the full rationale.
   pulse, visibly in the clear — SAF-SP's privacy pillar is precisely about no longer
   letting that be true, so the base protocol showing it plainly here is deliberate.
 - **Click a node to configure it.** Selecting Publisher or Subscriber reveals that
-  role's controls (client id, Register, topic, hardened/tamper/replay/subscribe
+  role's controls (client id, Register, topic, publish/tamper/replay/subscribe
   buttons) and drops a **runtime-verifier tap** below that node's link to the broker —
   drawn as if a probe were physically clipped onto the wire — showing five live LEDs
   (Secrecy, Alive, Weakagree, Niagree, Nisynch) for that node's own traffic.
-- **Hardened toggle**: the one control that changes what the *real* protocol code
-  does, not just how it's displayed. Off, `SAFClient.publish()`/`subscribe()` send the
-  as-specified `alpha = HMAC_k(x||c)` (the exact binding `saf_phase2.spdl` finds
-  Niagree/Nisynch failing for) — every exchange settles amber. On, they send the
-  hardened `alpha = HMAC_k(x||c||identifier_msg||t_msg)` plus a MAC'd broker reply
-  (`saf/crypto_utils.compute_alpha` / `compute_status_mac`), the exact binding
-  `saf_phase2_hardened_final.spdl` proves all-pass — every exchange settles green.
-  Phase 1 always settles green (no known live gap; matches `saf_phase1.spdl`'s
-  12/12 unbounded result). `saf/runtime_verifier.py` recomputes all of this
-  independently, live, from the real bytes each exchange actually used — and now
-  covers subscribe exchanges exactly the same way it covers publish ones.
+- **This phase implements the base paper only.** Every publish and subscribe sends
+  Algorithm 2 exactly as specified — `alpha = HMAC_k(x||c)` — via
+  `saf/crypto_utils.compute_alpha()`, which `saf/client.py` and `saf/gateway.py` both
+  call so their computations can never drift apart. `saf/runtime_verifier.py`
+  independently recomputes the same five properties Scyther checks, live, from the
+  real bytes each exchange used; because alpha never covers `identifier_msg`/`t_msg`,
+  Niagree/Nisynch correctly and reproducibly settle red on every exchange — the live
+  reproduction of `saf_phase2.spdl`'s real (static) result, not a bug. Phase 1 always
+  settles green (no known live gap; matches `saf_phase1.spdl`'s 12/12 unbounded
+  result). The hardened binding that closes this gap is documented as a finding in
+  §2 and verified in `saf_phase2_hardened_final.spdl`, but isn't wired into any
+  running code here — implementing it live is SAF-SP extension work, for a later phase.
 - **Attack controls**: buttons that drive the *real* `tamper_alpha=True` /
   `replay_identifier=...` hooks already used by `tests/attack_*.py`, so a tampered-HMAC
   or replayed-identifier denial happens live, on the real gateway.

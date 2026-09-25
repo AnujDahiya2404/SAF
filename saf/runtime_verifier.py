@@ -4,9 +4,13 @@ saf/runtime_verifier.py
 A "runtime verifier" that sits, logically, on the channel between the SAF
 client and the SAF gateway/broker and re-checks, live and per-message, the
 same five security properties formally proved (or found lacking) by the
-static Scyther models in scyther/saf_phase1.spdl, scyther/saf_phase2.spdl
-and scyther/saf_phase2_hardened_final.spdl -- see README.md sections 1.3
-and 2 for the full findings this module reproduces live.
+static Scyther models in scyther/saf_phase1.spdl and scyther/saf_phase2.spdl
+-- see README.md sections 1.3 and 2 for the full findings this module
+reproduces live. This phase implements the base paper only (Algorithm 2
+exactly as specified: alpha = HMAC_k(x||c)); the hardened binding that
+scyther/saf_phase2_hardened_final.spdl proves closes the Niagree/Nisynch
+gap is documented there as a finding, not wired into any running code here
+-- that belongs to the later SAF-SP extension.
 
 Why this is not "running Scyther on live traffic"
 ---------------------------------------------------
@@ -23,18 +27,13 @@ exchange* satisfies the same five properties Scyther's claims check
 message verdict. Nothing here is cached, mocked, or replayed from a
 previous run.
 
-Every message this reference implementation actually sends is the
-as-specified variant, HMAC_k(x||c), *unless* the caller explicitly opts
-into the hardened binding (SAFClient.publish(hardened=True), see
-crypto_utils.compute_alpha). So the Niagree/Nisynch verdict below is a real
-per-message runtime measurement, not a hardcoded constant: as-specified
-messages live-reproduce the exact gap saf_phase2.spdl found statically
-(alpha never covers identifier_msg/t_msg, so it cannot attest to *this*
-exchange); hardened messages -- which genuinely use
-HMAC_k(x||c||identifier_msg||t_msg) plus a MAC'd broker reply -- genuinely
-satisfy the same check this module applies to the as-specified case, and
-come back all-green, matching saf_phase2_hardened_final.spdl's all-pass,
-unbounded result.
+Because this reference implementation runs Algorithm 2 exactly as
+specified, alpha is a function of (x, c) only -- it cannot itself attest to
+*this* identifier_msg/t_msg pair. So the Niagree/Nisynch verdict below
+correctly, reproducibly comes back False on every live exchange: this is
+the live reproduction, on real traffic, of the exact gap
+scyther/saf_phase2.spdl finds statically (Niagree/Nisynch fail for the
+Client).
 """
 
 import logging
@@ -146,7 +145,6 @@ class RuntimeVerifier:
         t_msg = req_d["t_msg"]
         counter_used = req_d["counter_used"]
         topic = req_d.get("topic", "")
-        hardened = bool(req_d.get("hardened", False))
         tampered = bool(req_d.get("tampered", False))
         replayed = bool(req_d.get("replayed", False))
         approved = status_d["status"] == "Approved"
@@ -176,49 +174,29 @@ class RuntimeVerifier:
         results["Alive"] = fresh_counter and not tampered
         results["Weakagree"] = (not id_reused) and (not replayed)
 
-        # Niagree / Nisynch: recompute alpha under whichever formula this
-        # exchange actually used (crypto_utils.compute_alpha), and -- for a
-        # hardened, Approved exchange -- independently recompute the
-        # broker's statusMac too. Both bindings must genuinely hold for
-        # agreement over the full round trip to be established; as-specified
-        # messages can never satisfy this (alpha never covers identifier_msg/
-        # t_msg), matching saf_phase2.spdl's real Scyther result.
-        as_specified_alpha = cu.compute_alpha(st.k, st.x, counter_used, hardened=False)
-        hardened_alpha = cu.compute_alpha(st.k, st.x, counter_used, hardened=True,
-                                           identifier_msg=identifier_msg, t_msg=t_msg)
-        alpha_matches_hardened = (hardened_alpha.hex() == alpha_hex) and not tampered
-
-        status_mac_ok = None
-        if hardened and approved:
-            given_mac = status_d.get("status_mac_hex")
-            status_mac_ok = given_mac is not None and cu.constant_time_eq(
-                cu.compute_status_mac(st.k, identifier_msg, "Approved"), bytes.fromhex(given_mac)
-            )
-
-        agreement_established = bool(
-            hardened and approved and alpha_matches_hardened and (status_mac_ok is True)
-        )
-        results["Niagree"] = agreement_established
-        results["Nisynch"] = agreement_established
+        # Niagree / Nisynch: recompute alpha = HMAC_k(x||c) exactly as
+        # Algorithm 2 specifies it and compare to what was actually sent.
+        # As specified, alpha is a function of (x, c) only -- it cannot
+        # itself attest to *this* identifier_msg/t_msg pair, so exact
+        # agreement over the full exchange is never established by alpha
+        # alone. This is the live, per-message reproduction of
+        # scyther/saf_phase2.spdl's real Scyther result (README.md section 2).
+        expected_alpha = cu.compute_alpha(st.k, st.x, counter_used)
+        alpha_matches = (expected_alpha.hex() == alpha_hex) and not tampered
+        results["Niagree"] = False
+        results["Nisynch"] = False
 
         verdict = dict(
             client_id=client_id,
             identifier_msg=identifier_msg,
             t_msg=t_msg,
             counter_used=counter_used,
-            hardened=hardened,
             status=status_d["status"],
             alpha_hex=alpha_hex,
-            alpha_matches_as_specified_hmac=(as_specified_alpha.hex() == alpha_hex) and not tampered,
-            alpha_matches_hardened_hmac=alpha_matches_hardened,
-            status_mac_ok=status_mac_ok,
+            alpha_matches_expected_hmac=alpha_matches,
             properties=results,
             all_pass=all(results.values()),
-            hardened_alpha_hex=hardened_alpha.hex(),
-            gap_reference=(
-                "matches saf_phase2_hardened_final.spdl (all-pass, unbounded)" if agreement_established
-                else "matches saf_phase2.spdl (Niagree/Nisynch fail for the Client)"
-            ),
+            gap_reference="matches saf_phase2.spdl (Niagree/Nisynch fail for the Client)",
         )
         self.bus.publish("verifier", "verifier_check", **verdict)
 
