@@ -1,0 +1,89 @@
+/*
+ * SAF Phase 2: In-Session (Algorithm 2) -- Scyther SPDL model
+ *
+ * Reproduces SAF's per-message authentication phase, run "over an
+ * insecure channel" (Section V-A) once Phase 1 has already established
+ * the session key k, hashed client-state x, and counter c between
+ * Client and Broker.
+ *
+ * Modeling notes:
+ *  - alpha = HMAC_k(client_state || c)  (Algorithm 2, Step 4) is modeled
+ *    as hmac(k(Client,Broker), clientState, counter): k(Client,Broker) is
+ *    Scyther's built-in idiom for an already-established long-term
+ *    symmetric secret shared only by Client and Broker (standard idiom,
+ *    e.g. andrew-lowe-ban.spdl in the official protocol repository),
+ *    standing in here for the session key k that Phase 1 established.
+ *  - clientState and counter are modeled as PUBLIC constants (not
+ *    secret): this is intentional and matches the real cryptographic
+ *    assumption -- HMAC's security relies only on the secrecy of the
+ *    key, not the message, so an attacker who already knows
+ *    client_state/c still cannot forge alpha without k. This is a
+ *    stronger (more conservative) attacker model than assuming these
+ *    values are hidden.
+ *  - t_msg and identifier_msg are modeled as fresh nonces (Algorithm 2's
+ *    freshness/anti-replay/anti-duplication checks).
+ *  - Claims mirror Fig. 6 of the paper: Secret HMAC(...), Niagree,
+ *    Nisynch, Alive, Weakagree for both roles.
+ */
+
+hashfunction hmac;
+const clientState;
+const counter;
+const Approved;
+
+/*
+ * NOTE ON A FINDING FROM THIS REPRODUCTION
+ * -----------------------------------------
+ * Running this model against Scyther (unlike Fig. 6 of the paper) reveals
+ * that Niagree/Nisynch/Weakagree FAIL for the Client role. The discovered
+ * attack does not require breaking the HMAC at all: the Broker's
+ * VerificationStatus reply, "(idmsg, Approved)" (Algorithm 2, Step 6), is
+ * sent completely unauthenticated. An on-path/MITM attacker who merely
+ * observes idmsg (itself sent in the clear in Step 4) can immediately
+ * forge a matching "Approved" response to the client without ever
+ * knowing the session key k. The client has no cryptographic way to
+ * confirm the Approved status really originated from the broker that
+ * verified its HMAC.
+ *
+ * This is consistent with -- not contradictory to -- the base paper: the
+ * paper's own claims in Fig. 6 concern secrecy/agreement over the
+ * client_state/counter/key material established up to Step 4, not
+ * authenticity of the Step 6 status reply, so this gap was simply outside
+ * the property set the original authors checked. It is nonetheless a
+ * real exploitable weakness of SAF as literally specified, and directly
+ * relevant to SAF-SP's threat model. See saf_phase2_hardened.spdl for a
+ * corrected variant that MACs the status reply too.
+ */
+
+protocol SAFPhase2(Client, Broker)
+{
+    role Client
+    {
+        fresh tmsg, idmsg: Nonce;
+
+        send_1(Client, Broker, clientState, counter, idmsg, tmsg,
+               hmac(k(Client, Broker), clientState, counter));
+        recv_2(Broker, Client, idmsg, Approved);
+
+        claim_c1(Client, Secret, k(Client, Broker));
+        claim_c3(Client, Niagree);
+        claim_c4(Client, Nisynch);
+        claim_c5(Client, Alive);
+        claim_c6(Client, Weakagree);
+    }
+
+    role Broker
+    {
+        var tmsg, idmsg: Nonce;
+
+        recv_1(Client, Broker, clientState, counter, idmsg, tmsg,
+               hmac(k(Client, Broker), clientState, counter));
+        send_2(Broker, Client, idmsg, Approved);
+
+        claim_b1(Broker, Secret, k(Client, Broker));
+        claim_b3(Broker, Niagree);
+        claim_b4(Broker, Nisynch);
+        claim_b5(Broker, Alive);
+        claim_b6(Broker, Weakagree);
+    }
+}

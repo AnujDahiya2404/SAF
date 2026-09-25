@@ -1,0 +1,61 @@
+/*
+ * SAF Phase 2 -- HARDENED variant
+ *
+ * Fixes the gap discovered in saf_phase2.spdl: the base Algorithm 2's
+ * VerificationStatus reply, "(idmsg, Approved)", is sent unauthenticated,
+ * letting an on-path attacker forge it without knowing the session key.
+ *
+ * The fix is minimal and stays within SAF's existing lightweight-crypto
+ * design goals (Section V-A: "avoid the use of heavy computational
+ * processes"): the broker MACs its own status reply with the same
+ * session key, binding it to idmsg (so it cannot be replayed for a
+ * different message) and to Approved/Denied (so its meaning cannot be
+ * altered in transit):
+ *
+ *   statusMac = HMAC_k(idmsg, Approved)
+ *
+ * This costs one extra HMAC computation per publish (negligible next to
+ * the paper's own efficiency analysis in Section VII, which already
+ * counts 1*T_oh for "Verify HMAC and client state" in Phase 2) and
+ * requires no new round trip.
+ */
+
+hashfunction hmac;
+const clientState;
+const counter;
+const Approved;
+
+protocol SAFPhase2HardenedFinal(Client, Broker)
+{
+    role Client
+    {
+        fresh tmsg, idmsg: Nonce;
+
+        send_1(Client, Broker, clientState, counter, idmsg, tmsg,
+               hmac(k(Client, Broker), clientState, counter, idmsg, tmsg));
+        recv_2(Broker, Client, idmsg, Approved,
+               hmac(k(Client, Broker), idmsg, Approved));
+
+        claim_c1(Client, Secret, k(Client, Broker));
+        claim_c3(Client, Niagree);
+        claim_c4(Client, Nisynch);
+        claim_c5(Client, Alive);
+        claim_c6(Client, Weakagree);
+    }
+
+    role Broker
+    {
+        var tmsg, idmsg: Nonce;
+
+        recv_1(Client, Broker, clientState, counter, idmsg, tmsg,
+               hmac(k(Client, Broker), clientState, counter, idmsg, tmsg));
+        send_2(Broker, Client, idmsg, Approved,
+               hmac(k(Client, Broker), idmsg, Approved));
+
+        claim_b1(Broker, Secret, k(Client, Broker));
+        claim_b3(Broker, Niagree);
+        claim_b4(Broker, Nisynch);
+        claim_b5(Broker, Alive);
+        claim_b6(Broker, Weakagree);
+    }
+}
