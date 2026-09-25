@@ -77,3 +77,33 @@ def serialize_client_state(session_time: str, estimated_duration: str) -> bytes:
     """Canonical byte encoding of client_state = (session_time, estimated_duration),
     per Algorithm 1, Step 3."""
     return f"{session_time}|{estimated_duration}".encode("utf-8")
+
+
+def compute_alpha(session_key: bytes, state_hash: bytes, counter: int, *,
+                   hardened: bool = False, identifier_msg: str = None, t_msg: float = None) -> bytes:
+    """Algorithm 2, Step 4's per-message authenticator.
+
+    hardened=False (default): alpha = HMAC_k(x || c), exactly as literally
+    specified -- this is the variant Scyther finds Niagree/Nisynch failing
+    for in scyther/saf_phase2.spdl, because it never covers identifier_msg
+    or t_msg.
+
+    hardened=True: alpha = HMAC_k(x || c || identifier_msg || t_msg), the
+    fix verified all-pass, unbounded, in scyther/saf_phase2_hardened_final.spdl.
+    Both client.py and gateway.py call this same function so the two
+    variants can never drift apart.
+    """
+    data = state_hash + counter_to_bytes(counter)
+    if hardened:
+        if identifier_msg is None or t_msg is None:
+            raise ValueError("hardened alpha requires identifier_msg and t_msg")
+        data += identifier_msg.encode("utf-8") + repr(t_msg).encode("utf-8")
+    return hmac_sha256(session_key, data)
+
+
+def compute_status_mac(session_key: bytes, identifier_msg: str, status: str) -> bytes:
+    """statusMac = HMAC_k(identifier_msg || status), the broker-reply
+    authentication verified in scyther/saf_phase2_hardened_final.spdl --
+    fixes the gap where an on-path attacker could forge an unauthenticated
+    Approved/Denied reply. Only meaningful when hardened=True."""
+    return hmac_sha256(session_key, identifier_msg.encode("utf-8") + status.encode("utf-8"))

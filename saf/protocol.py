@@ -100,13 +100,16 @@ class PublishRequest:
     identifier_msg, plus the Level-1 info and the actual MQTT
     topic/payload it wants relayed once authenticated."""
     client_id: str
-    alpha_hex: str          # HMAC_k(x || c), hex
+    alpha_hex: str          # HMAC_k(x || c), hex -- or the hardened binding, see `hardened`
     t_msg: float            # timestamp
     identifier_msg: str     # unique per-message id
     level1_info: str        # last session's timestamp (or pre-session time if first)
     topic: str               # real application topic the client wants to publish to
     payload_b64: str         # base64 payload (may be ASCON-encrypted, see ascon_enc.py)
     encrypted: bool = False  # whether Step 7 (ASCON authenticate-then-encrypt) was applied
+    hardened: bool = False   # alpha = HMAC_k(x||c||identifier_msg||t_msg), per
+                              # scyther/saf_phase2_hardened_final.spdl, instead of the
+                              # as-specified HMAC_k(x||c) (scyther/saf_phase2.spdl)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -124,6 +127,9 @@ class VerificationStatus:
     identifier_msg: str
     status: str          # "Approved" | "Denied"
     reason: Optional[str] = None
+    status_mac_hex: Optional[str] = None  # HMAC_k(identifier_msg||status); only set when the
+                                            # request was hardened (closes the unauthenticated-
+                                            # reply gap, scyther/saf_phase2_hardened_final.spdl)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))

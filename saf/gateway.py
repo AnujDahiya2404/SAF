@@ -148,7 +148,7 @@ class SAFGateway:
         telemetry_bus.publish(
             "gateway", "phase2_request_received", client_id=req.client_id,
             alpha_hex=req.alpha_hex, t_msg=req.t_msg, identifier_msg=req.identifier_msg,
-            topic=req.topic, encrypted=req.encrypted,
+            topic=req.topic, encrypted=req.encrypted, hardened=req.hardened,
             counter_at_broker=(rec.counter if rec is not None else None),
         )
 
@@ -176,10 +176,12 @@ class SAFGateway:
             self._deny(req, "duplicate identifier_msg (replay or unintended duplication)")
             return
 
-        # Step 5c: verify alpha = HMAC_k(x || c)
-        # (see protocol.py module docstring for the x-vs-client_state clarification)
-        expected_alpha = cu.hmac_sha256(
-            rec.session_key, rec.state_hash + cu.counter_to_bytes(rec.counter)
+        # Step 5c: verify alpha -- as-specified HMAC_k(x||c), or the hardened
+        # HMAC_k(x||c||identifier_msg||t_msg) if the client requested it (see
+        # crypto_utils.compute_alpha; also protocol.py re: x-vs-client_state)
+        expected_alpha = cu.compute_alpha(
+            rec.session_key, rec.state_hash, rec.counter,
+            hardened=req.hardened, identifier_msg=req.identifier_msg, t_msg=req.t_msg,
         )
         try:
             given_alpha = bytes.fromhex(req.alpha_hex)
@@ -200,9 +202,17 @@ class SAFGateway:
         self.store.bump_counter(req.client_id)
         self.store.update_last_session_time(req.client_id, proto.now_iso())
 
+        # Hardened fix #2 (scyther/saf_phase2_hardened_final.spdl): the broker
+        # MACs its own reply, binding it to identifier_msg and to the
+        # Approved/Denied outcome, so an on-path attacker can no longer forge
+        # an unauthenticated status reply.
+        status_mac_hex = None
+        if req.hardened:
+            status_mac_hex = cu.compute_status_mac(rec.session_key, req.identifier_msg, "Approved").hex()
+
         status = proto.VerificationStatus(
             client_id=req.client_id, identifier_msg=req.identifier_msg,
-            status="Approved",
+            status="Approved", status_mac_hex=status_mac_hex,
         )
         self.client.publish(
             proto.TOPIC_SESSION_STATUS_FMT.format(client_id=req.client_id),
@@ -214,6 +224,7 @@ class SAFGateway:
             identifier_msg=req.identifier_msg, alpha_hex=req.alpha_hex,
             expected_alpha_hex=expected_alpha.hex(), t_msg=req.t_msg,
             counter_used=rec.counter, state_hash_hex=rec.state_hash.hex(),
+            hardened=req.hardened, status_mac_hex=status_mac_hex,
         )
 
         # relay the payload to the real application topic

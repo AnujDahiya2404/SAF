@@ -127,12 +127,20 @@ class SAFClient:
 
     def publish(self, topic: str, payload: bytes, encrypt: bool = False,
                 timeout: float = 5.0, tamper_alpha: bool = False,
-                replay_identifier: str = None) -> "proto.VerificationStatus":
+                replay_identifier: str = None, hardened: bool = False) -> "proto.VerificationStatus":
         """Steps 1-4 (client) then waits for the broker's Step 6 status.
 
         tamper_alpha / replay_identifier are attack-simulation hooks used
         by the tests/attack_*.py scripts -- they let us deliberately send
         a bad HMAC or a reused identifier_msg to verify the broker rejects it.
+
+        hardened selects which alpha binding to use: False (default) is the
+        base paper's Algorithm 2 exactly as specified -- HMAC_k(x||c), the
+        variant scyther/saf_phase2.spdl finds Niagree/Nisynch failing for.
+        True uses the sequence/message-bound binding verified all-pass in
+        scyther/saf_phase2_hardened_final.spdl, and additionally verifies
+        the broker's statusMac on the reply (see crypto_utils.compute_alpha /
+        compute_status_mac).
         """
         if not self.registered:
             raise RuntimeError("client must complete Phase 1 (register()) before publishing")
@@ -140,13 +148,15 @@ class SAFClient:
         # Step 1: determine Level-1 information
         level1_info = self.last_session_time or self.session_time
 
-        # Step 4: alpha = HMAC_k(x || c)   [see protocol.py docstring]
-        alpha = cu.hmac_sha256(self.k, self.x + cu.counter_to_bytes(self.c))
-        if tamper_alpha:
-            alpha = bytes([alpha[0] ^ 0xFF]) + alpha[1:]  # flip a bit -> invalid HMAC
-
         t_msg = cu.current_timestamp()
         identifier_msg = replay_identifier or cu.new_message_identifier()
+
+        # Step 4: alpha -- see crypto_utils.compute_alpha for the as-specified
+        # vs. hardened formulas
+        alpha = cu.compute_alpha(self.k, self.x, self.c, hardened=hardened,
+                                  identifier_msg=identifier_msg, t_msg=t_msg)
+        if tamper_alpha:
+            alpha = bytes([alpha[0] ^ 0xFF]) + alpha[1:]  # flip a bit -> invalid HMAC
 
         body = payload
         encrypted_flag = False
@@ -163,15 +173,16 @@ class SAFClient:
             topic=topic,
             payload_b64=base64.b64encode(body).decode("ascii"),
             encrypted=encrypted_flag,
+            hardened=hardened,
         )
         self._mqtt.publish(proto.TOPIC_SESSION_PUBLISH, req.to_json(), qos=1)
         self.log.info(f"[Phase2] sent publish request topic={topic} "
-                       f"identifier={identifier_msg} encrypted={encrypted_flag}")
+                       f"identifier={identifier_msg} encrypted={encrypted_flag} hardened={hardened}")
         telemetry_bus.publish(
             f"client:{self.client_id}", "phase2_request_sent", client_id=self.client_id,
             alpha_hex=alpha.hex(), t_msg=t_msg, identifier_msg=identifier_msg,
             topic=topic, encrypted=encrypted_flag, counter_used=self.c,
-            tampered=tamper_alpha, replayed=(replay_identifier is not None),
+            tampered=tamper_alpha, replayed=(replay_identifier is not None), hardened=hardened,
         )
 
         try:
@@ -183,6 +194,12 @@ class SAFClient:
             return None
 
         status = proto.VerificationStatus.from_json(status_payload)
+        status_mac_valid = None
+        if hardened and status.status_mac_hex is not None:
+            expected_mac = cu.compute_status_mac(self.k, status.identifier_msg, status.status)
+            status_mac_valid = cu.constant_time_eq(expected_mac, bytes.fromhex(status.status_mac_hex))
+            if not status_mac_valid:
+                self.log.warning("[Phase2] broker statusMac did NOT verify -- reply may be forged")
         if status.status == "Approved":
             self.c += 1  # counter increments with each new session/message, mirroring broker
             self.last_session_time = proto.now_iso()
@@ -192,5 +209,6 @@ class SAFClient:
         telemetry_bus.publish(
             f"client:{self.client_id}", "phase2_status_received", client_id=self.client_id,
             identifier_msg=status.identifier_msg, status=status.status, reason=status.reason,
+            hardened=hardened, status_mac_hex=status.status_mac_hex, status_mac_valid=status_mac_valid,
         )
         return status

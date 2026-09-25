@@ -23,25 +23,25 @@ exchange* satisfies the same five properties Scyther's claims check
 message verdict. Nothing here is cached, mocked, or replayed from a
 previous run.
 
-Because this reference implementation deliberately runs Algorithm 2
-*exactly as specified in the base paper* (see gateway.py / client.py
-docstrings), the Niagree/Nisynch check below will, correctly and
-reproducibly, keep reporting "not enforced by this alpha" on every live
-message -- this is the runtime reproduction, on real traffic, of the exact
-gap saf_phase2.spdl found statically. This module also recomputes, from the
-same real (k, x, c, identifier_msg, t_msg) tuple, what the hardened binding
-verified in saf_phase2_hardened_final.spdl would have produced:
-
-    alpha_hardened = HMAC_k(x || c || identifier_msg || t_msg)
-
-so the fix can be demonstrated side by side on live data, not asserted in
-prose.
+Every message this reference implementation actually sends is the
+as-specified variant, HMAC_k(x||c), *unless* the caller explicitly opts
+into the hardened binding (SAFClient.publish(hardened=True), see
+crypto_utils.compute_alpha). So the Niagree/Nisynch verdict below is a real
+per-message runtime measurement, not a hardcoded constant: as-specified
+messages live-reproduce the exact gap saf_phase2.spdl found statically
+(alpha never covers identifier_msg/t_msg, so it cannot attest to *this*
+exchange); hardened messages -- which genuinely use
+HMAC_k(x||c||identifier_msg||t_msg) plus a MAC'd broker reply -- genuinely
+satisfy the same check this module applies to the as-specified case, and
+come back all-green, matching saf_phase2_hardened_final.spdl's all-pass,
+unbounded result.
 """
 
 import logging
 import threading
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Set
+from typing import Deque, Dict, Optional, Set
 
 from . import crypto_utils as cu
 from .telemetry import bus as telemetry_bus
@@ -59,6 +59,7 @@ class ClientRuntimeState:
     session_time: Optional[str] = None
     seen_identifiers: Set[str] = field(default_factory=set)
     used_counters: Set[int] = field(default_factory=set)
+    pending: Dict[str, Deque[dict]] = field(default_factory=dict)
 
 
 class RuntimeVerifier:
@@ -103,28 +104,52 @@ class RuntimeVerifier:
                 st.x = bytes.fromhex(d["x_hex"])
                 st.k = bytes.fromhex(d["k_hex"])
                 st.session_time = d["session_time"]
+            # Phase 1 has no known live gap in this reference implementation --
+            # scyther/saf_phase1.spdl already proves all 12 claims, unbounded,
+            # for both roles, and there is nothing analogous to the Phase-2
+            # alpha-binding gap here to re-check per message. Reported as a
+            # single fact ("this registration completed"), not a fabricated
+            # 5-property checklist.
+            self.bus.publish("verifier", "verifier_check_phase1", client_id=d["client_id"],
+                              all_pass=True, gap_reference="matches saf_phase1.spdl (12/12 claims, unbounded)")
 
         elif evt.kind == "phase2_request_sent" and evt.source.startswith("client:"):
-            self._verify_message(evt.data)
+            self._record_pending(evt.data)
 
-    def _verify_message(self, d: dict) -> None:
+        elif evt.kind == "phase2_status_received" and evt.source.startswith("client:"):
+            self._verify_exchange(evt.data)
+
+    def _record_pending(self, d: dict) -> None:
         client_id = d["client_id"]
         with self._lock:
-            st = self._clients.get(client_id)
+            st = self._clients.setdefault(client_id, ClientRuntimeState(client_id))
+            st.pending.setdefault(d["identifier_msg"], deque()).append(d)
 
-        if st is None or st.k is None:
+    def _verify_exchange(self, status_d: dict) -> None:
+        client_id = status_d["client_id"]
+        identifier_msg = status_d["identifier_msg"]
+        with self._lock:
+            st = self._clients.get(client_id)
+            req_d = None
+            if st is not None:
+                q = st.pending.get(identifier_msg)
+                if q:
+                    req_d = q.popleft()
+
+        if st is None or st.k is None or req_d is None:
             self.bus.publish("verifier", "verifier_skip", client_id=client_id,
-                              identifier_msg=d.get("identifier_msg"),
-                              reason="no known Phase-1 state observed for this client")
+                              identifier_msg=identifier_msg,
+                              reason="no known Phase-1 state or matching request for this client")
             return
 
-        alpha_hex = d["alpha_hex"]
-        identifier_msg = d["identifier_msg"]
-        t_msg = d["t_msg"]
-        counter_used = d["counter_used"]
-        topic = d.get("topic", "")
-        tampered = bool(d.get("tampered", False))
-        replayed = bool(d.get("replayed", False))
+        alpha_hex = req_d["alpha_hex"]
+        t_msg = req_d["t_msg"]
+        counter_used = req_d["counter_used"]
+        topic = req_d.get("topic", "")
+        hardened = bool(req_d.get("hardened", False))
+        tampered = bool(req_d.get("tampered", False))
+        replayed = bool(req_d.get("replayed", False))
+        approved = status_d["status"] == "Approved"
 
         results: Dict[str, bool] = {}
 
@@ -146,39 +171,48 @@ class RuntimeVerifier:
         results["Alive"] = fresh_counter and not tampered
         results["Weakagree"] = (not id_reused) and (not replayed)
 
-        # Niagree / Nisynch: recompute alpha exactly as Algorithm 2 literally
-        # specifies -- HMAC_k(x || c) -- and compare to the message actually
-        # sent, then recompute the hardened, sequence/message-bound variant
-        # proved in saf_phase2_hardened_final.spdl for the same real data.
-        as_specified_alpha = cu.hmac_sha256(st.k, st.x + cu.counter_to_bytes(counter_used))
-        hardened_alpha = cu.hmac_sha256(
-            st.k,
-            st.x + cu.counter_to_bytes(counter_used)
-            + identifier_msg.encode("utf-8") + repr(t_msg).encode("utf-8"),
+        # Niagree / Nisynch: recompute alpha under whichever formula this
+        # exchange actually used (crypto_utils.compute_alpha), and -- for a
+        # hardened, Approved exchange -- independently recompute the
+        # broker's statusMac too. Both bindings must genuinely hold for
+        # agreement over the full round trip to be established; as-specified
+        # messages can never satisfy this (alpha never covers identifier_msg/
+        # t_msg), matching saf_phase2.spdl's real Scyther result.
+        as_specified_alpha = cu.compute_alpha(st.k, st.x, counter_used, hardened=False)
+        hardened_alpha = cu.compute_alpha(st.k, st.x, counter_used, hardened=True,
+                                           identifier_msg=identifier_msg, t_msg=t_msg)
+        alpha_matches_hardened = (hardened_alpha.hex() == alpha_hex) and not tampered
+
+        status_mac_ok = None
+        if hardened and approved:
+            given_mac = status_d.get("status_mac_hex")
+            status_mac_ok = given_mac is not None and cu.constant_time_eq(
+                cu.compute_status_mac(st.k, identifier_msg, "Approved"), bytes.fromhex(given_mac)
+            )
+
+        agreement_established = bool(
+            hardened and approved and alpha_matches_hardened and (status_mac_ok is True)
         )
-        alpha_matches_as_specified_hmac = (as_specified_alpha.hex() == alpha_hex) and not tampered
-        # As specified, alpha is a function of (x, c) only -- it cannot itself
-        # attest to *this* identifier_msg/t_msg pair, so exact agreement over
-        # the full exchange (Niagree/Nisynch) is never established by alpha
-        # alone. This is the live, per-message reproduction of README.md
-        # section 2, finding 2 (and matches saf_phase2.spdl's Scyther result).
-        results["Niagree"] = False
-        results["Nisynch"] = False
+        results["Niagree"] = agreement_established
+        results["Nisynch"] = agreement_established
 
         verdict = dict(
             client_id=client_id,
             identifier_msg=identifier_msg,
             t_msg=t_msg,
             counter_used=counter_used,
+            hardened=hardened,
+            status=status_d["status"],
             alpha_hex=alpha_hex,
-            alpha_matches_as_specified_hmac=alpha_matches_as_specified_hmac,
+            alpha_matches_as_specified_hmac=(as_specified_alpha.hex() == alpha_hex) and not tampered,
+            alpha_matches_hardened_hmac=alpha_matches_hardened,
+            status_mac_ok=status_mac_ok,
             properties=results,
             all_pass=all(results.values()),
             hardened_alpha_hex=hardened_alpha.hex(),
             gap_reference=(
-                "as-specified alpha matches saf_phase2.spdl (Niagree/Nisynch fail for "
-                "the Client); hardened_alpha_hex matches the binding proved all-pass, "
-                "unbounded, in saf_phase2_hardened_final.spdl"
+                "matches saf_phase2_hardened_final.spdl (all-pass, unbounded)" if agreement_established
+                else "matches saf_phase2.spdl (Niagree/Nisynch fail for the Client)"
             ),
         )
         self.bus.publish("verifier", "verifier_check", **verdict)

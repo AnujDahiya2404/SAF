@@ -66,26 +66,29 @@ code over a real Mosquitto broker; nothing is mocked, cached across runs, or
 hand-written. See `dashboard/server.py`'s module docstring and `saf/runtime_verifier.py`
 for the full rationale.
 
-- **Topology view**: MQTT Client — Runtime Verifier — SAF Gateway/Broker, animated
-  per real message, with a live phase indicator (Phase 1 / Phase 2 / Approved / Denied).
-- **Runtime Verifier ("Scyther node")** (`saf/runtime_verifier.py`): sits, in the
-  diagram, on the channel between client and broker. It is *not* Scyther running on
-  live traffic — Scyther is a static, offline model checker, it has no notion of "this
-  byte sequence, right now". What it does instead: for every real message, it
-  independently recomputes, from the real captured `k`, `x`, `c`, `identifier_msg`,
-  `t_msg`, whether *this specific exchange* satisfies the same five properties Scyther's
-  claims check (Secrecy, Alive, Weakagree, Niagree, Nisynch) — and, because this
-  reference implementation runs Algorithm 2 exactly as specified, it live-reproduces
-  the Niagree/Nisynch gap from §2 below on every single message, alongside the
-  hardened `alpha` the fix would have produced for that same real data.
-- **Live message data panel**: the real `x`, `k`, `c`, `alpha`, `identifier_msg`, `t_msg`
-  of the last exchange, in hex, as actually sent/received.
+- **Wire view**: Client — Broker, drawn as a real cable with a traveling glow pulse
+  per real message, plus five status LEDs on the broker (Secrecy, Alive, Weakagree,
+  Niagree, Nisynch) driven by `saf/runtime_verifier.py`. Green settle = the exchange
+  is fully secure; amber = approved but the Niagree/Nisynch gap applies; red = denied.
+- **Hardened toggle**: this is the one control that changes what the *real* protocol
+  code does, not just how it's displayed. Off, `SAFClient.publish()` sends the
+  as-specified `alpha = HMAC_k(x||c)` (the exact binding `saf_phase2.spdl` finds
+  Niagree/Nisynch failing for) — every message settles amber. On, it sends the
+  hardened `alpha = HMAC_k(x||c||identifier_msg||t_msg)` plus a MAC'd broker reply
+  (`saf/crypto_utils.compute_alpha` / `compute_status_mac`), the exact binding
+  `saf_phase2_hardened_final.spdl` proves all-pass — every message settles green.
+  Phase 1 always settles green (no known live gap; matches `saf_phase1.spdl`'s
+  12/12 unbounded result). `saf/runtime_verifier.py` recomputes all of this
+  independently, live, from the real bytes each exchange actually used.
 - **Attack controls**: buttons that drive the *real* `tamper_alpha=True` /
   `replay_identifier=...` hooks already used by `tests/attack_*.py`, so a tampered-HMAC
   or replayed-identifier denial happens live, on the real gateway.
-- **Static verification panel**: shells out, on demand, to the real `scyther-linux` /
-  `scyther-mac` binary against the three real `.spdl` files and parses its real stdout —
-  the same three results tabulated in §1.3, reproduced live rather than pasted in.
+
+There's no on-demand "run Scyther" button: the `.spdl` files in `scyther/` are
+pre-made, static models (see §1.3) — not something this dashboard or simulator
+generates — so shelling out to them from a button would just replay the same fixed,
+already-documented result every time rather than show anything live. Everything the
+dashboard shows instead is a genuine live computation over real traffic.
 
 Run it:
 ```bash
