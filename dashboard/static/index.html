@@ -6,110 +6,109 @@
 <title>SAF</title>
 <style>
   :root{
-    --bg:#0a0d12; --line:#1c2531;
-    --text:#e8edf3; --dim:#5d6b7d;
-    --blue:#4da3ff; --green:#37d67a; --amber:#f5a623; --red:#ff5468;
+    --bg:#f7f8fa; --surface:#ffffff; --line:#e5e7eb; --line-strong:#d1d5db;
+    --text:#0f172a; --dim:#6b7280;
+    --blue:#2563eb; --green:#16a34a; --amber:#d97706; --red:#dc2626;
     --mono:'SF Mono',Menlo,Consolas,monospace;
+    --radius:10px;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:
-    radial-gradient(1200px 500px at 50% -10%, #111a26 0%, var(--bg) 60%);
-    color:var(--text);font-family:-apple-system,'Segoe UI',Helvetica,sans-serif;min-height:100vh;}
+  html,body{height:100%;margin:0;overflow:hidden}
+  body{background:var(--bg);color:var(--text);
+       font-family:-apple-system,'Segoe UI',Helvetica,sans-serif;
+       display:flex;flex-direction:column}
 
-  header{padding:18px 28px 4px}
-  header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.03em}
+  header{flex:0 0 auto;padding:16px 28px 10px;display:flex;align-items:baseline;gap:10px}
+  header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.02em}
 
-  .stage{max-width:1180px;margin:0 auto;padding:8px 28px 4px}
-  .topo{position:relative;height:230px;user-select:none}
+  .stage{flex:0 0 auto;max-width:1180px;width:100%;margin:0 auto;padding:0 28px}
+  .topo{position:relative;height:190px;user-select:none}
 
-  .cable{position:absolute;top:50%;height:20px;margin-top:-10px;border-radius:10px;
-         background:linear-gradient(#2a3340,#12161c);border:1px solid #080a0d;z-index:1}
-  .core{position:absolute;top:50%;height:3px;margin-top:-1.5px;border-radius:2px;
-        background:#2a3644;transition:background .25s, box-shadow .25s;z-index:2}
-  .pulse{position:absolute;top:50%;width:13px;height:13px;border-radius:50%;
-         transform:translate(-50%,-50%);z-index:5;opacity:0;pointer-events:none}
-  .topic-tag{position:absolute;top:50%;margin-top:-30px;transform:translate(-50%,0);
+  .track{position:absolute;top:50%;height:7px;margin-top:-3.5px;border-radius:4px;background:var(--line)}
+  .fill{position:absolute;top:50%;height:7px;margin-top:-3.5px;border-radius:4px;
+        width:0;opacity:0;transition:opacity .25s}
+  .topic-tag{position:absolute;top:50%;margin-top:-27px;transform:translate(-50%,0);
              font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;
-             background:#0d1218;border:1px solid var(--line);white-space:nowrap;
-             opacity:0;pointer-events:none;z-index:6;transition:opacity .15s}
+             background:var(--surface);border:1px solid var(--line-strong);white-space:nowrap;
+             opacity:0;pointer-events:none;z-index:6;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 
-  .node{position:absolute;top:50%;transform:translate(-50%,-50%);width:110px;
-        display:flex;flex-direction:column;align-items:center;gap:6px;
-        background:none;border:none;color:var(--text);cursor:pointer;z-index:4;padding:6px}
+  .node{position:absolute;top:50%;transform:translate(-50%,-50%);width:104px;
+        display:flex;flex-direction:column;align-items:center;gap:5px;
+        background:none;border:none;color:var(--text);cursor:pointer;z-index:4;padding:4px}
   .node[disabled]{cursor:default}
-  .node .box{width:78px;height:64px;border-radius:11px;background:#101620;
-             border:1.5px solid #26313f;display:flex;align-items:center;justify-content:center;
-             transition:border-color .2s, box-shadow .2s}
-  .node.selected .box{border-color:var(--blue);box-shadow:0 0 14px rgba(77,163,255,.35)}
+  .node .box{width:72px;height:58px;border-radius:var(--radius);background:var(--surface);
+             border:1.5px solid var(--line-strong);display:flex;align-items:center;justify-content:center;
+             box-shadow:0 1px 3px rgba(15,23,42,.06);transition:border-color .2s, box-shadow .2s}
+  .node.selected .box{border-color:var(--blue);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
   .node .lbl{font-size:12px;font-weight:600}
   .node .sub{font-size:9.5px;color:var(--dim);font-family:var(--mono)}
-  .node svg{width:40px;height:36px}
+  .node svg{width:32px;height:30px}
 
-  .readout{text-align:center;margin-top:2px;min-height:20px;font-family:var(--mono);
+  .readout{text-align:center;margin-top:0;min-height:20px;font-family:var(--mono);
            font-size:12px;color:var(--dim)}
   .readout .v{font-weight:700}
   .readout .v.pass{color:var(--green)} .readout .v.gap{color:var(--amber)} .readout .v.deny{color:var(--red)}
 
-  .tap{position:absolute;top:50%;margin-top:34px;transform:translate(-50%,0);
+  .tap{position:absolute;top:50%;margin-top:30px;transform:translate(-50%,0);
        display:flex;flex-direction:column;align-items:center;opacity:0;transition:opacity .2s;z-index:3}
   .tap.show{opacity:1}
-  .tap .stem{width:1.5px;height:14px;background:var(--line)}
-  .tap .box{background:#0d1218;border:1px solid var(--line);border-radius:8px;padding:6px 9px;
-            display:flex;flex-direction:column;align-items:center;gap:4px}
-  .tap .name{font-size:9px;color:var(--dim);font-family:var(--mono);letter-spacing:.04em}
+  .tap .stem{width:1.5px;height:12px;background:var(--line-strong)}
+  .tap .box{background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:5px 9px;
+            display:flex;flex-direction:column;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
+  .tap .name{font-size:8.5px;color:var(--dim);font-family:var(--mono);letter-spacing:.04em}
   .tap .leds{display:flex;gap:5px}
-  .tap .led{width:6px;height:6px;border-radius:50%;background:#232d3a;transition:.2s}
-  .tap .led.pass{background:var(--green);box-shadow:0 0 5px var(--green)}
-  .tap .led.fail{background:var(--red);box-shadow:0 0 5px var(--red)}
+  .tap .led{width:6px;height:6px;border-radius:50%;background:var(--line-strong);transition:.2s}
+  .tap .led.pass{background:var(--green)}
+  .tap .led.fail{background:var(--red)}
 
-  .panel{max-width:1180px;margin:0 auto;padding:6px 28px 0}
-  .hint{text-align:center;color:var(--dim);font-size:12.5px;padding:22px 0}
-  .ctrl{display:flex;gap:9px;flex-wrap:wrap;align-items:center;padding:14px 0;
+  .panel{flex:0 0 auto;max-width:1180px;width:100%;margin:0 auto;padding:0 28px}
+  .hint{text-align:center;color:var(--dim);font-size:12.5px;padding:16px 0}
+  .ctrl{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:12px 0;
         border-top:1px solid var(--line)}
-  .ctrl input[type=text]{background:#0c1017;border:1px solid var(--line);color:var(--text);
-        border-radius:7px;padding:8px 11px;font-size:12.5px;font-family:var(--mono);min-width:100px}
+  .ctrl input[type=text]{background:var(--surface);border:1px solid var(--line-strong);color:var(--text);
+        border-radius:7px;padding:7px 10px;font-size:12.5px;font-family:var(--mono);min-width:100px}
   .ctrl input[type=text]:focus{outline:none;border-color:var(--blue)}
-  button.btn{background:#131a24;border:1px solid var(--line);color:var(--text);padding:8px 14px;
+  button.btn{background:var(--surface);border:1px solid var(--line-strong);color:var(--text);padding:7px 13px;
          border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600;transition:.15s}
   button.btn:hover{border-color:var(--blue);color:var(--blue)}
-  button.btn:disabled{opacity:.35;cursor:default}
-  button.btn.go{background:var(--blue);border-color:var(--blue);color:#04121f}
-  button.btn.go:hover{color:#04121f;filter:brightness(1.1)}
-  button.btn.warn{color:var(--amber);border-color:rgba(245,166,35,.35)}
-  button.btn.bad{color:var(--red);border-color:rgba(255,84,104,.35)}
-  .switch{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);cursor:pointer}
+  button.btn:disabled{opacity:.4;cursor:default}
+  button.btn.go{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.btn.go:hover{color:#fff;filter:brightness(1.08)}
+  button.btn.warn{color:var(--amber);border-color:#fde3c0}
+  button.btn.bad{color:var(--red);border-color:#f9d0d5}
+  .switch{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim);cursor:pointer}
   .switch input{display:none}
-  .track{width:32px;height:18px;border-radius:99px;background:#1a212c;border:1px solid var(--line);position:relative}
-  .track::after{content:"";position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:var(--dim);transition:.2s}
-  .switch input:checked + .track{background:rgba(55,214,122,.18);border-color:var(--green)}
-  .switch input:checked + .track::after{transform:translateX(14px);background:var(--green)}
+  .track-sw{width:30px;height:17px;border-radius:99px;background:var(--line);border:1px solid var(--line-strong);position:relative}
+  .track-sw::after{content:"";position:absolute;top:1px;left:1px;width:13px;height:13px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:.2s}
+  .switch input:checked + .track-sw{background:var(--green);border-color:var(--green)}
+  .switch input:checked + .track-sw::after{transform:translateX(13px)}
   .spacer{flex:1}
   .pill-result{font-family:var(--mono);font-size:11.5px;color:var(--dim)}
   .pill-result.pass{color:var(--green)} .pill-result.fail{color:var(--red)}
 
   /* ---------------- sequence diagram ---------------- */
-  .seq-wrap{max-width:1180px;margin:0 auto;padding:0 28px 40px}
-  .seq-head{display:grid;grid-template-columns:1fr 1fr 1fr;padding:10px 0 8px;
-            border-top:1px solid var(--line);margin-top:4px}
+  .seq-wrap{flex:1 1 auto;min-height:0;max-width:1180px;width:100%;margin:0 auto;
+            padding:0 28px 16px;display:flex;flex-direction:column}
+  .seq-head{display:grid;grid-template-columns:1fr 1fr 1fr;padding:9px 0 7px;
+            border-top:1px solid var(--line);flex:0 0 auto}
   .seq-head div{text-align:center;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:600}
-  #seq{height:340px;overflow-y:auto}
+  #seq{flex:1 1 auto;min-height:0;overflow-y:auto}
   #seq .seq-inner{position:relative;min-height:100%}
   #seq .lifeline{position:absolute;top:0;bottom:0;width:0;border-left:1px dashed var(--line);z-index:0}
   #seq .rows{position:relative;z-index:1}
-  .row{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;min-height:30px;padding:2px 0}
+  .row{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;min-height:28px;padding:1px 0}
   .arrow{grid-column:1/3;position:relative;font-family:var(--mono);font-size:10.5px;padding:0 8px}
   .arrow.right2{grid-column:2/4}
-  .arrow .line{height:1.5px;background:var(--c,var(--blue));position:relative;margin-top:14px}
+  .arrow .line{height:1.5px;background:var(--c,var(--blue));position:relative;margin-top:13px}
   .arrow .line::after{content:"";position:absolute;top:-3px;width:0;height:0;
         border-top:4px solid transparent;border-bottom:4px solid transparent}
   .arrow.fwd .line::after{right:0;border-left:7px solid var(--c,var(--blue))}
   .arrow.bwd .line::after{left:0;border-right:7px solid var(--c,var(--blue))}
-  .arrow .lbl{font-size:10px;color:var(--c,var(--blue));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .arrow .lbl{font-size:10px;color:var(--c,var(--blue));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
   .arrow .detail{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .note{grid-column:1/4;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--dim);
-        padding:5px 0}
+        padding:4px 0}
   .note b{color:var(--text);font-weight:600}
-  .note.store{color:#8b98a5}
 </style>
 </head>
 <body>
@@ -118,27 +117,26 @@
 
 <div class="stage">
   <div class="topo" id="topo">
-    <div class="cable" id="cableL" style="left:16%;width:32%"></div>
-    <div class="cable" id="cableR" style="left:52%;width:32%"></div>
-    <div class="core" id="coreL" style="left:17.5%;width:29%"></div>
-    <div class="core" id="coreR" style="left:53.5%;width:29%"></div>
+    <div class="track" id="trackL" style="left:16%;width:32%"></div>
+    <div class="track" id="trackR" style="left:52%;width:32%"></div>
+    <div class="fill" id="fillL"></div>
+    <div class="fill" id="fillR"></div>
     <div class="topic-tag" id="topicTag"></div>
-    <div class="pulse" id="pulse"></div>
 
     <button class="node" id="nodePublisher" data-role="publisher" style="left:10%">
-      <div class="box"><svg viewBox="0 0 90 70"><rect x="0" y="0" width="90" height="70" rx="10" fill="#0a0e14" stroke="#26313f" stroke-width="1.5"/><rect x="14" y="14" width="62" height="42" rx="4" fill="#080b10" stroke="#26313f"/><line x1="20" y1="24" x2="60" y2="24" stroke="#334154" stroke-width="2"/><line x1="20" y1="32" x2="50" y2="32" stroke="#334154" stroke-width="2"/><line x1="20" y1="40" x2="56" y2="40" stroke="#334154" stroke-width="2"/></svg></div>
+      <div class="box"><svg viewBox="0 0 32 32" fill="none" stroke="#334155" stroke-width="1.6"><rect x="6" y="6" width="20" height="20" rx="3"/><circle cx="16" cy="16" r="5"/><path d="M16 2v4M16 26v4M2 16h4M26 16h4"/></svg></div>
       <div class="lbl">Publisher</div>
       <div class="sub" id="pubSub">click to configure</div>
     </button>
 
     <button class="node" id="nodeBroker" disabled style="left:50%">
-      <div class="box"><svg viewBox="0 0 90 90"><rect x="0" y="0" width="90" height="90" rx="10" fill="#0a0e14" stroke="#26313f" stroke-width="1.5"/><rect x="10" y="12" width="70" height="14" rx="3" fill="#080b10" stroke="#26313f"/><rect x="10" y="32" width="70" height="14" rx="3" fill="#080b10" stroke="#26313f"/><rect x="10" y="52" width="70" height="14" rx="3" fill="#080b10" stroke="#26313f"/><circle cx="18" cy="73" r="3" fill="#334154"/><circle cx="30" cy="73" r="3" fill="#334154"/><circle cx="42" cy="73" r="3" fill="#334154"/></svg></div>
+      <div class="box"><svg viewBox="0 0 32 32" fill="none" stroke="#334155" stroke-width="1.6"><rect x="4" y="4" width="24" height="7" rx="1.5"/><rect x="4" y="13" width="24" height="7" rx="1.5"/><rect x="4" y="22" width="24" height="7" rx="1.5"/><circle cx="9" cy="7.5" r="1" fill="#334155"/><circle cx="9" cy="16.5" r="1" fill="#334155"/><circle cx="9" cy="25.5" r="1" fill="#334155"/></svg></div>
       <div class="lbl">Broker</div>
       <div class="sub">Gateway + Mosquitto</div>
     </button>
 
     <button class="node" id="nodeSubscriber" data-role="subscriber" style="left:90%">
-      <div class="box"><svg viewBox="0 0 90 70"><rect x="0" y="0" width="90" height="70" rx="10" fill="#0a0e14" stroke="#26313f" stroke-width="1.5"/><rect x="14" y="10" width="62" height="38" rx="4" fill="#080b10" stroke="#26313f"/><path d="M30 29 a15 15 0 0 1 30 0" fill="none" stroke="#334154" stroke-width="2"/><circle cx="45" cy="29" r="3" fill="#334154"/><line x1="45" y1="32" x2="45" y2="40" stroke="#334154" stroke-width="2"/></svg></div>
+      <div class="box"><svg viewBox="0 0 32 32" fill="none" stroke="#334155" stroke-width="1.6"><path d="M8 13a8 8 0 0 1 16 0v6l3 4H5l3-4z"/><path d="M13 26a3 3 0 0 0 6 0"/></svg></div>
       <div class="lbl">Subscriber</div>
       <div class="sub" id="subSub">click to configure</div>
     </button>
@@ -166,8 +164,8 @@
     <button class="btn go" id="btnPubRegister">Register</button>
     <input type="text" id="pubTopic" value="sensors/temperature" style="min-width:150px">
     <input type="text" id="pubPayload" value="temp=23.5C" style="min-width:110px">
-    <label class="switch"><input type="checkbox" id="pubHardened"><span class="track"></span>hardened</label>
-    <label class="switch"><input type="checkbox" id="pubEncrypt"><span class="track"></span>ascon</label>
+    <label class="switch"><input type="checkbox" id="pubHardened"><span class="track-sw"></span>hardened</label>
+    <label class="switch"><input type="checkbox" id="pubEncrypt"><span class="track-sw"></span>ascon</label>
     <button class="btn" id="btnPublish">Publish</button>
     <button class="btn warn" id="btnTamper">Tamper</button>
     <button class="btn bad" id="btnReplay">Replay</button>
@@ -179,7 +177,7 @@
     <input type="text" id="subId" value="AA:BB:CC:00:22:02">
     <button class="btn go" id="btnSubRegister">Register</button>
     <input type="text" id="subTopic" value="sensors/temperature" style="min-width:150px">
-    <label class="switch"><input type="checkbox" id="subHardened"><span class="track"></span>hardened</label>
+    <label class="switch"><input type="checkbox" id="subHardened"><span class="track-sw"></span>hardened</label>
     <button class="btn" id="btnSubscribe">Subscribe</button>
     <span class="spacer"></span>
     <span class="pill-result" id="subResult"></span>
@@ -259,52 +257,64 @@ function updateTap() {
   });
 }
 
-// ---------------- wire mechanics ----------------
-const pulse = $("pulse"), topicTag = $("topicTag"), readout = $("readout");
-const coreL = $("coreL"), coreR = $("coreR");
+// ---------------- wire mechanics: a smooth directional fill, not a dot ----------------
+const trackL = $("trackL"), trackR = $("trackR"), fillL = $("fillL"), fillR = $("fillR"), topicTag = $("topicTag");
+const readout = $("readout");
 const X = {publisher: 10, broker: 50, subscriber: 90};
+const SEG = {
+  L: {left: 16, width: 32, right: 52},   // matches #trackL's left/width above
+  R: {left: 52, width: 32, right: 84},   // matches #trackR's left/width above
+};
 
-// Every wire effect (a pulse traveling, or a settle-color flash) is queued
+function segFor(a, b) {
+  return ((a === "broker" && b === "subscriber") || (a === "subscriber" && b === "broker")) ? "R" : "L";
+}
+
+// Every wire effect (a fill sweeping in, or a settle-color hold) is queued
 // and played strictly one at a time, at a deliberately slow, watchable pace
 // -- real round trips (tens of ms) are far faster than the animation, so
 // without this queue a second event's effect starts before the first has
-// visually finished and the two fight over the same pulse/core elements.
+// visually finished and the two fight over the same fill element.
 let animQueue = Promise.resolve();
 function enqueue(fn) {
   animQueue = animQueue.then(fn);
   return animQueue;
 }
 
-const TRAVEL_MS = 1400, SETTLE_MS = 1600;
+const TRAVEL_MS = 1400, SETTLE_MS = 1500;
 
-function travel(from, to, color, topic) {
+function flow(from, to, color, topic) {
   return enqueue(() => new Promise(resolve => {
-    const x1 = X[from], x2 = X[to];
-    pulse.style.background = color; pulse.style.color = color;
-    pulse.style.boxShadow = `0 0 14px 5px ${color}`;
-    pulse.style.opacity = "1";
-    const core = (from === "broker" && to === "subscriber") || (from === "subscriber" && to === "broker") ? coreR : coreL;
-    core.style.background = color;
-    core.style.boxShadow = `0 0 8px 1px ${color}`;
+    const key = segFor(from, to);
+    const seg = SEG[key];
+    const fill = key === "L" ? fillL : fillR;
+    const forward = X[to] > X[from]; // moving left-to-right?
+
+    fill.style.transition = "none";
+    fill.style.background = color;
+    fill.style.opacity = "1";
+    if (forward) {
+      fill.style.right = "auto";
+      fill.style.left = seg.left + "%";
+      fill.style.width = "0%";
+    } else {
+      fill.style.left = "auto";
+      fill.style.right = (100 - seg.right) + "%";
+      fill.style.width = "0%";
+    }
     if (topic) {
       topicTag.textContent = topic;
       topicTag.style.opacity = "1";
       topicTag.style.color = color;
+      topicTag.style.left = (forward ? seg.left : seg.right) + "%";
     }
     const start = performance.now();
     function step(t) {
       const f = Math.min(1, (t - start) / TRAVEL_MS);
-      const x = x1 + (x2 - x1) * f;
-      pulse.style.left = x + "%";
-      topicTag.style.left = x + "%";
+      fill.style.width = (seg.width * f) + "%";
+      if (topic) topicTag.style.left = (forward ? seg.left + seg.width * f : seg.right - seg.width * f) + "%";
       if (f < 1) { requestAnimationFrame(step); }
-      else {
-        pulse.style.opacity = "0";
-        topicTag.style.opacity = "0";
-        core.style.background = "#2a3644";
-        core.style.boxShadow = "none";
-        resolve();
-      }
+      else { topicTag.style.opacity = "0"; resolve(); }
     }
     requestAnimationFrame(step);
   }));
@@ -312,12 +322,13 @@ function travel(from, to, color, topic) {
 
 function settle(link, kind) {
   return enqueue(() => new Promise(resolve => {
-    const color = kind === "pass" ? "#37d67a" : kind === "gap" ? "#f5a623" : "#ff5468";
-    const core = link === "R" ? coreR : coreL;
-    core.style.background = color;
-    core.style.boxShadow = `0 0 10px 2px ${color}`;
+    const color = kind === "pass" ? "#16a34a" : kind === "gap" ? "#d97706" : "#dc2626";
+    const fill = link === "R" ? fillR : fillL;
+    fill.style.background = color;
     setTimeout(() => {
-      core.style.background = "#2a3644"; core.style.boxShadow = "none"; resolve();
+      fill.style.transition = "opacity .4s";
+      fill.style.opacity = "0";
+      resolve();
     }, SETTLE_MS);
   }));
 }
@@ -329,7 +340,7 @@ function setReadout(text, cls) {
   if (text) readoutTimer = setTimeout(() => { readout.textContent = selected ? "" : "click a node to begin"; }, 4500);
 }
 
-// ---------------- sequence diagram ----------------
+// ---------------- sequence diagram ---------------- //
 function trunc(h, n = 18) { return h && h.length > n ? h.slice(0, n) + "…" : h; }
 function addRow(html) {
   const seq = $("seq"), rows = $("seqRows");
@@ -340,18 +351,25 @@ function addRow(html) {
   while (rows.children.length > 300) rows.removeChild(rows.firstChild);
   if (atBottom) seq.scrollTop = seq.scrollHeight;
 }
-function addArrow(dir, span2, label, detail, color) {
-  // dir: 'fwd' (col1->col2 or col2->col3) | 'bwd' (reverse)
+// semanticDir: "toBroker" (client -> broker) or "toClient" (broker -> client).
+// "fwd" (CSS) always means "arrowhead on the right of this row's span" and
+// "bwd" means "on the left" -- which node that visually points at flips
+// between the Publisher|Broker span (right = Broker) and the Broker|
+// Subscriber span (right = Subscriber), so the CSS direction has to be
+// derived from the semantic direction + which span this is, never hardcoded.
+function addArrow(semanticDir, role, label, detail, color) {
+  const span2 = role === "subscriber";
+  const dir = semanticDir === "toBroker" ? (span2 ? "bwd" : "fwd") : (span2 ? "fwd" : "bwd");
   const cls = "arrow " + dir + (span2 ? " right2" : "");
   addRow(`<div class="row"><div class="${cls}" style="--c:${color}">
       <div class="lbl">${label}</div><div class="line"></div><div class="detail">${detail}</div>
     </div></div>`);
 }
 function addNote(text) {
-  addRow(`<div class="row"><div class="note store"><b>store</b> ${text}</div></div>`);
+  addRow(`<div class="row"><div class="note"><b>store</b> ${text}</div></div>`);
 }
 
-// ---------------- event handling ----------------
+// ---------------- event handling ---------------- //
 function handleEvent(evt) {
   const d = evt.data || {};
   switch (evt.kind) {
@@ -364,8 +382,8 @@ function handleEvent(evt) {
           roles[role].registered = true; roles[role].x = d.x_hex; roles[role].k = d.k_hex; roles[role].c = d.c;
           $(role === "publisher" ? "pubSub" : "subSub").textContent = "registered · c=" + d.c;
         }
-        travel("broker", role || "publisher", "#4da3ff");
-        addArrow("bwd", role === "subscriber", "PreSessionResponse", `x=${trunc(d.x_hex)} k=${trunc(d.k_hex)} c=${d.c}`, "#4da3ff");
+        flow("broker", role || "publisher", "#2563eb");
+        addArrow("toClient", role, "PreSessionResponse", `x=${trunc(d.x_hex)} k=${trunc(d.k_hex)} c=${d.c}`, "#2563eb");
         addNote(`${d.client_id} → x=h(client_state)=${trunc(d.x_hex,14)}…, k=${trunc(d.k_hex,14)}…, c=${d.c}`);
         if (selected === role) updateTap();
       }
@@ -374,8 +392,8 @@ function handleEvent(evt) {
     case "phase1_request_sent": {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
-      travel(role || "publisher", "broker", "#4da3ff");
-      addArrow("fwd", role === "subscriber", "PreSessionRequest", `client_id=${d.client_id}`, "#4da3ff");
+      flow(role || "publisher", "broker", "#2563eb");
+      addArrow("toBroker", role, "PreSessionRequest", `client_id=${d.client_id}`, "#2563eb");
       break;
     }
 
@@ -385,11 +403,10 @@ function handleEvent(evt) {
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
       if (!role) break;
       const isSub = d.intent === "subscribe";
-      travel(role, "broker", d.tampered ? "#ff5468" : "#4da3ff", d.topic);
-      addArrow(isSub ? "fwd" : "fwd", role === "subscriber",
-        isSub ? "SubscribeRequest" : "PublishRequest",
+      flow(role, "broker", d.tampered ? "#dc2626" : "#2563eb", d.topic);
+      addArrow("toBroker", role, isSub ? "SubscribeRequest" : "PublishRequest",
         `α=${trunc(d.alpha_hex)} idmsg=${trunc(d.identifier_msg,10)} topic=${d.topic}`,
-        d.tampered ? "#ff5468" : "#4da3ff");
+        d.tampered ? "#dc2626" : "#2563eb");
       if (selected === role) setReadout((isSub ? "subscribing to " : "publishing to ") + d.topic);
       break;
     }
@@ -397,16 +414,16 @@ function handleEvent(evt) {
     case "phase2_approved": {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
-      if (role) travel("broker", role, "#4da3ff");
+      if (role) flow("broker", role, "#2563eb");
       break;
     }
     case "phase2_denied": {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
       if (role) {
-        travel("broker", role, "#ff5468");
+        flow("broker", role, "#dc2626");
         settle(role === "subscriber" ? "R" : "L", "deny");
-        addArrow("bwd", role === "subscriber", "VerificationStatus", `Denied — ${d.reason || ""}`, "#ff5468");
+        addArrow("toClient", role, "VerificationStatus", `Denied — ${d.reason || ""}`, "#dc2626");
         if (selected === role) setReadout("denied — " + (d.reason || ""), "deny");
       }
       break;
@@ -420,9 +437,9 @@ function handleEvent(evt) {
       if (role && d.status === "Approved") {
         const kind = d.all_pass ? "pass" : "gap";
         settle(role === "subscriber" ? "R" : "L", kind);
-        addArrow("bwd", role === "subscriber", "VerificationStatus",
+        addArrow("toClient", role, "VerificationStatus",
           `Approved${d.status_mac_ok !== null ? (d.status_mac_ok ? " ✓statusMac" : " ✗statusMac") : ""}`,
-          kind === "pass" ? "#37d67a" : "#f5a623");
+          kind === "pass" ? "#16a34a" : "#d97706");
         if (selected === role) {
           setReadout(d.all_pass ? "secure (hardened)" : "niagree/nisynch gap (as specified)", kind);
         }
@@ -434,20 +451,20 @@ function handleEvent(evt) {
       // real data leaving the broker toward app/<topic> -- if the subscriber
       // is subscribed to this exact topic, animate broker -> subscriber too.
       if (roles.subscriber.subscribedTopic === d.topic) {
-        setTimeout(() => travel("broker", "subscriber", "#37d67a", d.topic), 120);
+        setTimeout(() => flow("broker", "subscriber", "#16a34a", d.topic), 120);
       }
       break;
     }
     case "app_message_received": {
       if (d.client_id !== roles.subscriber.clientId) break;
-      addArrow("fwd", true, "AppData (relayed)", `topic=${d.topic}`, "#37d67a");
+      addArrow("toClient", "subscriber", "AppData (relayed)", `topic=${d.topic}`, "#16a34a");
       if (selected === "subscriber") setReadout("received on " + d.topic, "pass");
       break;
     }
   }
 }
 
-// ---------------- websocket ----------------
+// ---------------- websocket ---------------- //
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -460,7 +477,7 @@ function connectWS() {
 }
 connectWS();
 
-// ---------------- REST ----------------
+// ---------------- REST ---------------- //
 async function postJSON(url, body) {
   const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
   return r.json();
