@@ -5,11 +5,19 @@ Live web dashboard for the SAF reference implementation. Every number this
 serves is produced by the real, unmodified protocol code in saf/ (real
 Mosquitto broker, real SAFGateway, real SAFClient, real HMAC/ASCON crypto)
 via the telemetry bus (saf/telemetry.py) and the runtime verifier
-(saf/runtime_verifier.py, the "Scyther node" that sits, in the diagram,
-between the client and the broker). The only static-analysis artifact
-served here is /api/scyther, which shells out to the actual scyther-linux
-/ scyther-mac binary against the repo's real .spdl models and parses its
-real stdout -- it is never precomputed or cached across process restarts.
+(saf/runtime_verifier.py) that live-checks each real exchange.
+
+This dashboard deliberately does not shell out to the Scyther binary: the
+.spdl models in scyther/ are pre-made, static models, not something this
+simulation generates, so "running Scyther" here would just replay a fixed,
+already-documented result (see README.md section 1.3) rather than show
+anything live. What *is* live is the "hardened" toggle on Publish: it
+switches the real client/gateway code between the as-specified alpha
+binding (HMAC_k(x||c) -- the one saf_phase2.spdl finds Niagree/Nisynch
+failing for) and the hardened binding verified all-pass in
+saf_phase2_hardened_final.spdl (HMAC_k(x||c||identifier_msg||t_msg) plus a
+MAC'd broker reply) -- saf/runtime_verifier.py re-derives both, live, from
+the real bytes each exchange actually used.
 
 Run (after `pip install fastapi "uvicorn[standard]"` and starting/allowing
 this to start a local Mosquitto broker on 127.0.0.1:1883):
@@ -21,8 +29,6 @@ Then open http://127.0.0.1:8000/
 
 import asyncio
 import logging
-import platform
-import re
 import socket
 import subprocess
 import sys
@@ -50,15 +56,6 @@ log = logging.getLogger("saf.dashboard")
 BROKER_HOST = "127.0.0.1"
 BROKER_PORT = 1883
 MOSQUITTO_CONF = REPO_ROOT / "mosquitto_conf" / "mosquitto.conf"
-
-SCYTHER_MODELS = {
-    "phase1": REPO_ROOT / "scyther" / "saf_phase1.spdl",
-    "phase2": REPO_ROOT / "scyther" / "saf_phase2.spdl",
-    "phase2_hardened": REPO_ROOT / "scyther" / "saf_phase2_hardened_final.spdl",
-}
-SCYTHER_BIN = REPO_ROOT / "scyther" / "bin" / (
-    "scyther-mac" if platform.system() == "Darwin" else "scyther-linux"
-)
 
 app = FastAPI(title="SAF Live Protocol Dashboard")
 
@@ -141,6 +138,7 @@ class PublishRequest(BaseModel):
     encrypt: bool = False
     tamper: bool = False
     replay: bool = False
+    hardened: bool = False
 
 
 def _get_or_create_client(client_id: str) -> SAFClient:
@@ -187,7 +185,7 @@ async def api_publish(req: PublishRequest):
                                                "replay -- publish normally (and get Approved) first"}
         status = c.publish(
             req.topic, req.payload.encode("utf-8"), encrypt=req.encrypt,
-            tamper_alpha=req.tamper, replay_identifier=replay_id,
+            tamper_alpha=req.tamper, replay_identifier=replay_id, hardened=req.hardened,
         )
         if status is not None and status.status == "Approved":
             c._last_approved_identifier_msg = status.identifier_msg
@@ -216,53 +214,6 @@ async def api_status():
 @app.get("/api/history")
 async def api_history(n: int = 200):
     return [e.to_dict() for e in bus.recent(n)]
-
-
-_CLAIM_RE = re.compile(
-    r"claim\t(?P<protocol>\S+),(?P<role>\S+)\t(?P<claim_id>\S+)\t(?P<param>\S+)\t"
-    r"(?:\x1b\[\d+m)?(?P<verdict>Ok|Fail)(?:\x1b\[0m)?\t\[(?P<comment>[^\]]*)\]"
-)
-
-
-@app.get("/api/scyther/{model}")
-async def api_scyther(model: str):
-    spdl = SCYTHER_MODELS.get(model)
-    if spdl is None:
-        return {"ok": False, "error": f"unknown model '{model}', choose one of {list(SCYTHER_MODELS)}"}
-    if not SCYTHER_BIN.exists():
-        return {"ok": False, "error": f"scyther binary not found at {SCYTHER_BIN}"}
-
-    loop = asyncio.get_event_loop()
-
-    def _run():
-        start = time.time()
-        try:
-            proc = subprocess.run(
-                [str(SCYTHER_BIN), "--unbounded", str(spdl)],
-                capture_output=True, text=True, timeout=120,
-            )
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": "scyther timed out after 120s"}
-        duration = time.time() - start
-        raw = proc.stdout + proc.stderr
-        claims = []
-        for m in _CLAIM_RE.finditer(raw):
-            claims.append({
-                "protocol": m.group("protocol"), "role": m.group("role"),
-                "claim_id": m.group("claim_id"), "param": m.group("param"),
-                "verdict": m.group("verdict"), "comment": m.group("comment"),
-            })
-        all_ok = bool(claims) and all(c["verdict"] == "Ok" for c in claims)
-        return {
-            "ok": True, "model": model, "spdl_file": spdl.name,
-            "duration_seconds": round(duration, 3),
-            "claims": claims, "all_pass": all_ok,
-            "raw_output": raw,
-        }
-
-    result = await loop.run_in_executor(None, _run)
-    bus.publish("scyther", "scyther_run", **{k: v for k, v in result.items() if k != "raw_output"})
-    return result
 
 
 # --------------------------------------------------------------------- #
