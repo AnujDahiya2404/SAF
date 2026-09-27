@@ -54,20 +54,7 @@
   .readout{text-align:center;margin-top:0;min-height:20px;font-family:var(--mono);
            font-size:12px;color:var(--dim)}
   .readout .v{font-weight:700}
-  .readout .v.pass{color:var(--green)} .readout .v.gap{color:var(--amber)} .readout .v.deny{color:var(--red)}
-
-  .tap{position:absolute;top:50%;margin-top:30px;transform:translate(-50%,0);
-       display:flex;flex-direction:column;align-items:center;opacity:0;transition:opacity .2s;z-index:3}
-  .tap.show{opacity:1}
-  .tap .stem{width:1.5px;height:12px;background:var(--line-strong)}
-  .tap .box{background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:5px 9px;
-            display:flex;flex-direction:column;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
-  .tap .name{font-size:8.5px;color:var(--dim);font-family:var(--mono);letter-spacing:.04em}
-  .tap .name #tapScope{color:var(--text);font-weight:600}
-  .tap .leds{display:flex;gap:5px}
-  .tap .led{width:6px;height:6px;border-radius:50%;background:var(--line-strong);transition:.2s}
-  .tap .led.pass{background:var(--green)}
-  .tap .led.fail{background:var(--red)}
+  .readout .v.pass{color:var(--green)} .readout .v.deny{color:var(--red)}
 
   .panel{flex:0 0 auto;max-width:1180px;width:100%;margin:0 auto;padding:0 28px}
   .hint{text-align:center;color:var(--dim);font-size:12.5px;padding:16px 0}
@@ -113,7 +100,7 @@
   .arrow.fwd .line::after{right:0;border-left:7px solid var(--c,var(--blue))}
   .arrow.bwd .line::after{left:0;border-right:7px solid var(--c,var(--blue))}
   .arrow .lbl{font-size:10px;color:var(--c,var(--blue));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
-  .arrow .detail{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .arrow .detail{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:6px}
   .note{grid-column:1/4;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--dim);
         padding:4px 0}
   .note b{color:var(--text);font-weight:600}
@@ -146,19 +133,6 @@
       <div class="meta"><div class="lbl">Subscriber</div><div class="sub" id="subSub">click to configure</div></div>
     </button>
 
-    <div class="tap" id="tap">
-      <div class="stem"></div>
-      <div class="box">
-        <div class="name">runtime verifier <span id="tapScope"></span></div>
-        <div class="leds">
-          <span class="led" data-p="Secrecy" title="Secrecy"></span>
-          <span class="led" data-p="Alive" title="Alive"></span>
-          <span class="led" data-p="Weakagree" title="Weakagree"></span>
-          <span class="led" data-p="Niagree" title="Niagree"></span>
-          <span class="led" data-p="Nisynch" title="Nisynch"></span>
-        </div>
-      </div>
-    </div>
   </div>
   <div class="readout" id="readout">click a node to begin</div>
 </div>
@@ -224,12 +198,6 @@ const roles = {
   subscriber: {clientId: $("subId").value, registered: false, x:null, k:null, c:null, subscribedTopic: null},
 };
 let selected = null; // 'publisher' | 'subscriber' | null
-const lastVerdict = {};      // clientId -> {Secrecy:.., Alive:.., ...}
-const lastVerdictScope = {}; // clientId -> "publish" | "subscribe" -- which real
-                              // exchange produced lastVerdict, shown next to the
-                              // LEDs so a stale Phase-2 result is never mistaken
-                              // for a comment on Phase 1 / registration.
-const phase1Done = {};       // clientId -> true
 
 // ---------------- node selection ----------------
 function selectNode(role) {
@@ -241,36 +209,16 @@ function selectNode(role) {
   $("hint").style.display = selected ? "none" : "block";
   clearTimeout(readoutTimer);
   readout.textContent = selected ? "" : "click a node to begin";
-  updateTap();
 }
 $("nodePublisher").onclick = () => selectNode("publisher");
 $("nodeSubscriber").onclick = () => selectNode("subscriber");
-
-function updateTap() {
-  const tap = $("tap");
-  if (!selected) { tap.classList.remove("show"); return; }
-  tap.classList.add("show");
-  tap.style.left = selected === "publisher" ? "33%" : "67%";
-  const cid = roles[selected].clientId;
-  const verdict = lastVerdict[cid];
-  $("tapScope").textContent = verdict ? `· last ${lastVerdictScope[cid]}` : (phase1Done[cid] ? "· registration" : "");
-  const leds = [...tap.querySelectorAll(".led")];
-  leds.forEach(el => {
-    el.classList.remove("pass", "fail");
-    if (verdict) {
-      el.classList.add(verdict[el.dataset.p] ? "pass" : "fail");
-    } else if (phase1Done[cid]) {
-      el.classList.add("pass"); // phase 1 only -- no known live gap, matches saf_phase1.spdl
-    }
-  });
-}
 
 // ---------------- wire mechanics: a smooth directional fill, not a dot ----------------
 const trackL = $("trackL"), trackR = $("trackR"), fillL = $("fillL"), fillR = $("fillR"), topicTag = $("topicTag");
 const readout = $("readout");
 const X = {publisher: 10, broker: 50, subscriber: 90};
 const SEG = {
-  L: {left: 16, width: 32, right: 52},   // matches #trackL's left/width above
+  L: {left: 16, width: 32, right: 48},   // matches #trackL's left/width above
   R: {left: 52, width: 32, right: 84},   // matches #trackR's left/width above
 };
 
@@ -383,13 +331,6 @@ function handleEvent(evt) {
   switch (evt.kind) {
     case "phase1_established":
       if (evt.source.startsWith("client")) {
-        phase1Done[d.client_id] = true;
-        // A fresh registration starts a new session (new x/k/c) -- any
-        // earlier Phase-2 verdict for this client_id no longer applies,
-        // so the tap should go back to showing Phase 1's real all-pass
-        // result rather than keep displaying a stale Phase-2 gap.
-        delete lastVerdict[d.client_id];
-        delete lastVerdictScope[d.client_id];
         const role = roles.publisher.clientId === d.client_id ? "publisher"
                     : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
         if (role) {
@@ -399,15 +340,47 @@ function handleEvent(evt) {
         flow("broker", role || "publisher", "#2563eb");
         addArrow("toClient", role, "PreSessionResponse", `x=${trunc(d.x_hex)} k=${trunc(d.k_hex)} c=${d.c}`, "#2563eb");
         addNote(`${d.client_id} → x=h(client_state)=${trunc(d.x_hex,14)}…, k=${trunc(d.k_hex,14)}…, c=${d.c}`);
-        if (selected === role) updateTap();
       }
       break;
+
+    case "phase1_ack_sent": {
+      // Algorithm 1, Step 8 / Fig. 2 arrow 8: client -> broker "Sends ack".
+      if (!evt.source.startsWith("client")) break;
+      const role = roles.publisher.clientId === d.client_id ? "publisher"
+                  : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
+      flow(role || "publisher", "broker", "#2563eb");
+      addArrow("toBroker", role, "PreSessionAck", `ack=${d.ack}`, "#2563eb");
+      break;
+    }
 
     case "phase1_request_sent": {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
       flow(role || "publisher", "broker", "#2563eb");
       addArrow("toBroker", role, "PreSessionRequest", `client_id=${d.client_id}`, "#2563eb");
+      break;
+    }
+
+    case "phase2_session_initiated": {
+      // Algorithm 2, Step 2 / Fig. 3 arrow 2: client -> broker "Sends a
+      // request to publish data or subscribe to a topic".
+      if (!evt.source.startsWith("client")) break;
+      const role = roles.publisher.clientId === d.client_id ? "publisher"
+                  : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
+      if (!role) break;
+      flow(role, "broker", "#2563eb");
+      addArrow("toBroker", role, "SessionInitiate", `intent=${d.intent} topic=${d.topic}`, "#2563eb");
+      break;
+    }
+
+    case "phase2_level1_requested": {
+      // Algorithm 2, Step 3 / Fig. 3 arrow 3: broker -> client "Requests
+      // for level 1 information".
+      const role = roles.publisher.clientId === d.client_id ? "publisher"
+                  : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
+      if (!role) break;
+      flow("broker", role, "#2563eb");
+      addArrow("toClient", role, "Level1InfoRequest", "requesting level-1 info", "#2563eb");
       break;
     }
 
@@ -428,7 +401,12 @@ function handleEvent(evt) {
     case "phase2_approved": {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
-      if (role) flow("broker", role, "#2563eb");
+      if (role) {
+        flow("broker", role, "#2563eb");
+        settle(role === "subscriber" ? "R" : "L", "pass");
+        addArrow("toClient", role, "VerificationStatus", "Approved", "#16a34a");
+        if (selected === role) setReadout("approved", "pass");
+      }
       break;
     }
     case "phase2_denied": {
@@ -439,27 +417,6 @@ function handleEvent(evt) {
         settle(role === "subscriber" ? "R" : "L", "deny");
         addArrow("toClient", role, "VerificationStatus", `Denied — ${d.reason || ""}`, "#dc2626");
         if (selected === role) setReadout("denied — " + (d.reason || ""), "deny");
-      }
-      break;
-    }
-
-    case "verifier_check": {
-      lastVerdict[d.client_id] = d.properties;
-      lastVerdictScope[d.client_id] = d.intent || "publish";
-      if (selected && roles[selected].clientId === d.client_id) updateTap();
-      const role = roles.publisher.clientId === d.client_id ? "publisher"
-                  : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
-      if (role && d.status === "Approved") {
-        // Algorithm 2 exactly as specified never binds alpha to
-        // identifier_msg/t_msg, so Niagree/Nisynch always fail here --
-        // this is the live reproduction of scyther/saf_phase2.spdl's real
-        // result, not a bug. See README.md section 2.
-        const kind = d.all_pass ? "pass" : "gap";
-        settle(role === "subscriber" ? "R" : "L", kind);
-        addArrow("toClient", role, "VerificationStatus", "Approved", kind === "pass" ? "#16a34a" : "#d97706");
-        if (selected === role) {
-          setReadout(d.all_pass ? "secure" : "niagree/nisynch gap (base paper, Algorithm 2)", kind);
-        }
       }
       break;
     }

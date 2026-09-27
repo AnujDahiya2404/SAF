@@ -27,6 +27,13 @@ Stateful Authentication Framework) extension.
   this reference implementation only wired up the publish path; subscribe now goes
   through the identical HMAC challenge (`SAFGateway._verify_and_approve()`, shared by
   both) before the client's own MQTT connection is allowed to issue a real SUBSCRIBE.
+  Registration also now sends the real Step-8 **ack** back to the broker (Fig. 2), and
+  every Phase-2 call opens with a real **SessionInitiate → Level1InfoRequest**
+  handshake (Algorithm 2 Steps 2-3, Fig. 3) before the existing HMAC request — see
+  `SessionInitiate`/`Level1InfoRequest` in `saf/protocol.py`. Both are pure handshake
+  (no security-relevant fields, not required by `_verify_and_approve()`), added so
+  every arrow the paper's own sequence diagrams draw is a real message here too, not
+  just the security-critical ones.
 - `saf/crypto_utils.py`: SHA-256 hashing, HMAC-SHA256, 32-byte session keys, 16-bit
   counters — all per Table V.
 - `saf/ascon_enc.py`: ASCON-128 authenticate-then-encrypt for Algorithm 2 Step 7
@@ -56,22 +63,31 @@ since it isn't packaged for apt/pip. Binary at `scyther/bin/scyther-linux`.
 | Model | Claims | Result |
 |---|---|---|
 | `saf_phase1.spdl` — Pre-Session (Algorithm 1) | Secret ×2, Niagree, Nisynch, Alive, Weakagree, per role | **All 12 pass, unbounded** |
-| `saf_phase2.spdl` — In-Session, **as literally specified** (Algorithm 2) | same 5 properties × 2 roles | **Secret passes; Niagree/Nisynch/Alive/Weakagree fail for the Client** |
+| `saf_phase2.spdl` — In-Session, **as literally specified** (Algorithm 2) | same 5 properties × 2 roles | **Secret passes for both. Client: Niagree/Nisynch/Alive/Weakagree all fail. Broker: Niagree/Nisynch fail, Alive/Weakagree pass.** (see the model's own header comment for why) |
 | `saf_phase2_hardened_final.spdl` — In-Session with proposed fix | same | **All 10 pass, unbounded ("proof of correctness")** |
 
-Run any of them:
+Run any of them individually:
 ```bash
 ./scyther/bin/scyther-linux --unbounded scyther/saf_phase1.spdl     # Linux
 ./scyther/bin/scyther-mac --unbounded scyther/saf_phase1.spdl       # macOS (incl. Apple Silicon)
 ```
+Or run the two all-green models (Phase 1 and the hardened Phase 2 fix) together,
+formatted, with one command — auto-detects Linux vs. macOS:
+```bash
+./scyther/verify.sh              # bounded (matches the paper's own default)
+./scyther/verify.sh --unbounded  # unbounded
+```
+`saf_phase2.spdl` (Phase 2 exactly as the base paper specifies it) is deliberately
+left out of `verify.sh` — its whole purpose is documenting the real Niagree/Nisynch
+gap above, not demonstrating an all-green result — so it's run on its own, as shown
+in the table.
 
 ### 1.4 Live protocol dashboard (`dashboard/`)
 A real-time web UI over the exact same, unmodified `saf/` code above — built so the
 protocol's own behaviour, not just a pass/fail line in a terminal, is what gets
 demonstrated. Every value it shows is computed live by the real client/gateway
 code over a real Mosquitto broker; nothing is mocked, cached across runs, or
-hand-written. See `dashboard/server.py`'s module docstring and `saf/runtime_verifier.py`
-for the full rationale.
+hand-written. See `dashboard/server.py`'s module docstring for the full rationale.
 
 - **Three-node topology**: Publisher — Broker — Subscriber, each pair joined by a
   cable with a traveling glow pulse per real message, always animated in the actual
@@ -82,21 +98,27 @@ for the full rationale.
   letting that be true, so the base protocol showing it plainly here is deliberate.
 - **Click a node to configure it.** Selecting Publisher or Subscriber reveals that
   role's controls (client id, Register, topic, publish/tamper/replay/subscribe
-  buttons) and drops a **runtime-verifier tap** below that node's link to the broker —
-  drawn as if a probe were physically clipped onto the wire — showing five live LEDs
-  (Secrecy, Alive, Weakagree, Niagree, Nisynch) for that node's own traffic.
-- **This phase implements the base paper only.** Every publish and subscribe sends
-  Algorithm 2 exactly as specified — `alpha = HMAC_k(x||c)` — via
-  `saf/crypto_utils.compute_alpha()`, which `saf/client.py` and `saf/gateway.py` both
-  call so their computations can never drift apart. `saf/runtime_verifier.py`
-  independently recomputes the same five properties Scyther checks, live, from the
-  real bytes each exchange used; because alpha never covers `identifier_msg`/`t_msg`,
-  Niagree/Nisynch correctly and reproducibly settle red on every exchange — the live
-  reproduction of `saf_phase2.spdl`'s real (static) result, not a bug. Phase 1 always
-  settles green (no known live gap; matches `saf_phase1.spdl`'s 12/12 unbounded
-  result). The hardened binding that closes this gap is documented as a finding in
-  §2 and verified in `saf_phase2_hardened_final.spdl`, but isn't wired into any
-  running code here — implementing it live is SAF-SP extension work, for a later phase.
+  buttons).
+- **No Scyther-derived verdict anywhere in the UI.** An earlier version drew a
+  "runtime verifier" tap with five live LEDs next to each node; it's gone. Scyther is
+  a static, offline model checker — it has no notion of "this specific real message,
+  right now" — so overlaying its results onto a live per-message trace made it look
+  like a live per-message verdict, which it never actually was: every real Phase-2
+  exchange correctly showed the same Niagree/Nisynch red (the real, reproducible gap
+  in Algorithm 2 exactly as specified — see §2), with no way to tell from the UI
+  alone that this was expected and not a bug. The real, formal Scyther results are
+  one command away instead — see §1.3's `scyther/verify.sh`.
+- **Every real message in Figs. 2/3 of the paper now has its own arrow**, not just
+  the security-critical ones: Phase 1's client→broker **ack** (Algorithm 1 Step 8,
+  Fig. 2 arrow 8, "Sends ack") and Phase 2's **SessionInitiate**/**Level1InfoRequest**
+  handshake (Algorithm 2 Steps 2-3, Fig. 3 arrows 2-3, "Sends a request to publish
+  data or subscribe to a topic" / "Requests for level 1 information") are real MQTT
+  round trips `saf/client.py` and `saf/gateway.py` now actually exchange before the
+  existing HMAC request/verification-status pair — see `SessionInitiate`/
+  `Level1InfoRequest` in `saf/protocol.py`. Both are pure handshake: they carry no
+  security-relevant fields and `SAFGateway._verify_and_approve()` doesn't require
+  them to have happened first, so they can't be used to bypass or weaken the actual
+  HMAC check.
 - **Attack controls**: buttons that drive the *real* `tamper_alpha=True` /
   `replay_identifier=...` hooks already used by `tests/attack_*.py`, so a tampered-HMAC
   or replayed-identifier denial happens live, on the real gateway.
@@ -111,8 +133,8 @@ for the full rationale.
 There's no on-demand "run Scyther" button: the `.spdl` files in `scyther/` are
 pre-made, static models (see §1.3) — not something this dashboard or simulator
 generates — so shelling out to them from a button would just replay the same fixed,
-already-documented result every time rather than show anything live. Everything the
-dashboard shows instead is a genuine live computation over real traffic.
+already-documented result every time rather than show anything live. Run
+`scyther/verify.sh` in a terminal instead (§1.3).
 
 Run it:
 ```bash

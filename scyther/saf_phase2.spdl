@@ -34,25 +34,44 @@ const Approved;
 /*
  * NOTE ON A FINDING FROM THIS REPRODUCTION
  * -----------------------------------------
- * Running this model against Scyther (unlike Fig. 6 of the paper) reveals
- * that Niagree/Nisynch/Weakagree FAIL for the Client role. The discovered
- * attack does not require breaking the HMAC at all: the Broker's
- * VerificationStatus reply, "(idmsg, Approved)" (Algorithm 2, Step 6), is
- * sent completely unauthenticated. An on-path/MITM attacker who merely
- * observes idmsg (itself sent in the clear in Step 4) can immediately
- * forge a matching "Approved" response to the client without ever
- * knowing the session key k. The client has no cryptographic way to
- * confirm the Approved status really originated from the broker that
- * verified its HMAC.
+ * Running this model against Scyther (unlike Fig. 6 of the paper) gives,
+ * for both roles (verified with `./scyther/bin/scyther-linux
+ * scyther/saf_phase2.spdl`, bounded and --unbounded, identical result):
+ *
+ *   Client: Secret Ok | Niagree FAIL | Nisynch FAIL | Alive FAIL | Weakagree FAIL
+ *   Broker: Secret Ok | Niagree FAIL | Nisynch FAIL | Alive Ok   | Weakagree Ok
+ *
+ * The discovered attack does not require breaking the HMAC at all: the
+ * Broker's VerificationStatus reply, "(idmsg, Approved)" (Algorithm 2,
+ * Step 6), is sent completely unauthenticated. An on-path/MITM attacker
+ * who merely observes idmsg (itself sent in the clear in Step 4) can
+ * immediately forge a matching "Approved" response to the Client without
+ * ever knowing the session key k -- the Client has no cryptographic way
+ * to confirm the Approved status really originated from the Broker that
+ * verified its HMAC. This is why every one of the Client's non-secrecy
+ * claims fails: Niagree/Nisynch (no matching-conversation guarantee over
+ * Step 6), and even Alive/Weakagree (the forged reply doesn't require the
+ * Broker to be running at all).
+ *
+ * The Broker's Alive/Weakagree still hold (the Client's Step 4 message
+ * *is* HMAC-bound, so the Broker really does know some live Client sent
+ * it), but the Broker's own Niagree/Nisynch still fail: alpha binds only
+ * (client_state, c), not idmsg/tmsg, so those two fields can be swapped
+ * out in transit without invalidating the HMAC -- the Broker ends up
+ * agreeing with the Client on the session key, but not necessarily on
+ * the exact (idmsg, tmsg) pair the Client believes it sent.
  *
  * This is consistent with -- not contradictory to -- the base paper: the
  * paper's own claims in Fig. 6 concern secrecy/agreement over the
  * client_state/counter/key material established up to Step 4, not
  * authenticity of the Step 6 status reply, so this gap was simply outside
- * the property set the original authors checked. It is nonetheless a
- * real exploitable weakness of SAF as literally specified, and directly
- * relevant to SAF-SP's threat model. See saf_phase2_hardened.spdl for a
- * corrected variant that MACs the status reply too.
+ * the property set the original authors checked (and the paper never
+ * publishes the .spdl source that produced Fig. 6, so the two cannot be
+ * directly diffed). It is nonetheless a real, reproducible, exploitable
+ * weakness of SAF as literally specified in Algorithm 2, and directly
+ * relevant to SAF-SP's threat model. See saf_phase2_hardened_final.spdl
+ * for a corrected variant that MACs the status reply too -- confirmed by
+ * an actual Scyther run to pass all 10 claims, unbounded.
  */
 
 protocol SAFPhase2(Client, Broker)
