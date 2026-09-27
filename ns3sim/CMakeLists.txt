@@ -35,6 +35,19 @@ find_package(nlohmann_json 3.9 REQUIRED)
 # never references it, so nothing below needs the target to exist.
 find_package(MPI COMPONENTS CXX)
 
+# Homebrew's ns-3 3.48 formula ships .pc files with a genuinely broken
+# Libs: line -- confirmed directly (`cat .../lib/pkgconfig/ns3-core.pc`):
+#   Libs: -L${libdir} -lns3.48-core  -linterface_libs-NOTFOUND
+# "-NOTFOUND" is CMake's own universal marker for an unresolved
+# find_package()/find_library() result substituted straight into the
+# file at ns-3's own build time -- an upstream/packaging bug, not
+# something fixable by changing how we consume it beyond dropping the
+# bogus entries. Every legitimately named module/system library
+# pkg_check_modules() parsed out of the same Libs: line is unaffected by
+# this filter; on ns-3 packages without the bug (e.g. the apt
+# libns3-dev package) it's a no-op since nothing matches.
+list(FILTER NS3_LIBRARIES EXCLUDE REGEX ".*-NOTFOUND$")
+
 add_executable(saf-ns3-sim
   src/saf-crypto.cc
   src/saf-broker-app.cc
