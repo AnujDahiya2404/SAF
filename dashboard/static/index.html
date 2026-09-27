@@ -113,7 +113,7 @@
   .arrow.fwd .line::after{right:0;border-left:7px solid var(--c,var(--blue))}
   .arrow.bwd .line::after{left:0;border-right:7px solid var(--c,var(--blue))}
   .arrow .lbl{font-size:10px;color:var(--c,var(--blue));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
-  .arrow .detail{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .arrow .detail{font-size:9.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:6px}
   .note{grid-column:1/4;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--dim);
         padding:4px 0}
   .note b{color:var(--text);font-weight:600}
@@ -270,7 +270,7 @@ const trackL = $("trackL"), trackR = $("trackR"), fillL = $("fillL"), fillR = $(
 const readout = $("readout");
 const X = {publisher: 10, broker: 50, subscriber: 90};
 const SEG = {
-  L: {left: 16, width: 32, right: 52},   // matches #trackL's left/width above
+  L: {left: 16, width: 32, right: 48},   // matches #trackL's left/width above
   R: {left: 52, width: 32, right: 84},   // matches #trackR's left/width above
 };
 
