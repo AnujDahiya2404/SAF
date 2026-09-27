@@ -63,6 +63,7 @@
   .tap .box{background:var(--surface);border:1px solid var(--line-strong);border-radius:8px;padding:5px 9px;
             display:flex;flex-direction:column;align-items:center;gap:4px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
   .tap .name{font-size:8.5px;color:var(--dim);font-family:var(--mono);letter-spacing:.04em}
+  .tap .name #tapScope{color:var(--text);font-weight:600}
   .tap .leds{display:flex;gap:5px}
   .tap .led{width:6px;height:6px;border-radius:50%;background:var(--line-strong);transition:.2s}
   .tap .led.pass{background:var(--green)}
@@ -148,7 +149,7 @@
     <div class="tap" id="tap">
       <div class="stem"></div>
       <div class="box">
-        <div class="name">runtime verifier</div>
+        <div class="name">runtime verifier <span id="tapScope"></span></div>
         <div class="leds">
           <span class="led" data-p="Secrecy" title="Secrecy"></span>
           <span class="led" data-p="Alive" title="Alive"></span>
@@ -224,6 +225,10 @@ const roles = {
 };
 let selected = null; // 'publisher' | 'subscriber' | null
 const lastVerdict = {};      // clientId -> {Secrecy:.., Alive:.., ...}
+const lastVerdictScope = {}; // clientId -> "publish" | "subscribe" -- which real
+                              // exchange produced lastVerdict, shown next to the
+                              // LEDs so a stale Phase-2 result is never mistaken
+                              // for a comment on Phase 1 / registration.
 const phase1Done = {};       // clientId -> true
 
 // ---------------- node selection ----------------
@@ -248,6 +253,7 @@ function updateTap() {
   tap.style.left = selected === "publisher" ? "33%" : "67%";
   const cid = roles[selected].clientId;
   const verdict = lastVerdict[cid];
+  $("tapScope").textContent = verdict ? `· last ${lastVerdictScope[cid]}` : (phase1Done[cid] ? "· registration" : "");
   const leds = [...tap.querySelectorAll(".led")];
   leds.forEach(el => {
     el.classList.remove("pass", "fail");
@@ -378,6 +384,12 @@ function handleEvent(evt) {
     case "phase1_established":
       if (evt.source.startsWith("client")) {
         phase1Done[d.client_id] = true;
+        // A fresh registration starts a new session (new x/k/c) -- any
+        // earlier Phase-2 verdict for this client_id no longer applies,
+        // so the tap should go back to showing Phase 1's real all-pass
+        // result rather than keep displaying a stale Phase-2 gap.
+        delete lastVerdict[d.client_id];
+        delete lastVerdictScope[d.client_id];
         const role = roles.publisher.clientId === d.client_id ? "publisher"
                     : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
         if (role) {
@@ -433,6 +445,7 @@ function handleEvent(evt) {
 
     case "verifier_check": {
       lastVerdict[d.client_id] = d.properties;
+      lastVerdictScope[d.client_id] = d.intent || "publish";
       if (selected && roles[selected].clientId === d.client_id) updateTap();
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
