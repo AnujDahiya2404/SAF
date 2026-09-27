@@ -56,7 +56,7 @@ since it isn't packaged for apt/pip. Binary at `scyther/bin/scyther-linux`.
 | Model | Claims | Result |
 |---|---|---|
 | `saf_phase1.spdl` — Pre-Session (Algorithm 1) | Secret ×2, Niagree, Nisynch, Alive, Weakagree, per role | **All 12 pass, unbounded** |
-| `saf_phase2.spdl` — In-Session, **as literally specified** (Algorithm 2) | same 5 properties × 2 roles | **Secret passes; Niagree/Nisynch/Alive/Weakagree fail for the Client** |
+| `saf_phase2.spdl` — In-Session, **as literally specified** (Algorithm 2) | same 5 properties × 2 roles | **Secret passes for both. Client: Niagree/Nisynch/Alive/Weakagree all fail. Broker: Niagree/Nisynch fail, Alive/Weakagree pass.** (see the model's own header comment for why) |
 | `saf_phase2_hardened_final.spdl` — In-Session with proposed fix | same | **All 10 pass, unbounded ("proof of correctness")** |
 
 Run any of them:
