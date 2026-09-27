@@ -131,8 +131,8 @@ hand-written. See `dashboard/server.py`'s module docstring for the full rational
   chat-style log.
 
 There's no on-demand "run Scyther" button: the `.spdl` files in `scyther/` are
-pre-made, static models (see §1.3) — not something this dashboard or simulator
-generates — so shelling out to them from a button would just replay the same fixed,
+pre-made, static models (see §1.3) — not something this dashboard generates — so
+shelling out to them from a button would just replay the same fixed,
 already-documented result every time rather than show anything live. Run
 `scyther/verify.sh` in a terminal instead (§1.3).
 
@@ -142,44 +142,6 @@ pip install -r requirements.txt
 python3 -m dashboard.server        # starts mosquitto (if not already running) + the gateway
 ```
 Then open **http://127.0.0.1:8000/**.
-
-### 1.5 Network simulator (`simulator/`)
-A multi-client network simulation — the "how does this behave at scale, under real
-network conditions" complement to the single-client dashboard above. See
-`simulator/netsim.py`'s module docstring for the full design rationale, summarised here:
-
-**Why SimPy, and not Mininet / NS-3 / OMNeT++:** Mininet needs real Linux network
-namespaces, unavailable on macOS without standing up a Docker/VM layer first; NS-3 and
-OMNeT++ have no native MQTT support, so using either would mean reimplementing this
-already formally-verified protocol logic in C++ — throwing away the exact code
-`scyther/` verified and `tests/` exercises. `simpy.rt.RealtimeEnvironment` is a
-legitimate, widely-used Python discrete-event simulation engine that instead paces
-*when* each simulated client acts (arrival process, per-link latency/jitter, packet
-loss) while every action it schedules is a real call into `saf.client.SAFClient` /
-`saf.gateway.SAFGateway` — real HMAC/ASCON crypto, a real MQTT round trip over a real
-Mosquitto broker. Real network calls are dispatched to a thread pool so many clients'
-round trips genuinely overlap, instead of being serialised by the simulator itself.
-Nothing about this is a shortcut taken to avoid the "real" simulators — it's the
-option that keeps the verified protocol code in the loop; this trade-off is worth
-stating explicitly in the SAF-SP write-up.
-
-Each run produces `events.json` (the complete real telemetry stream) and
-`metrics.json` (derived, real summary statistics — registration outcomes under the
-Section V-B rate limiter, per-message latency, approval/denial counts and reasons,
-how often the live runtime verifier reproduced the Niagree/Nisynch gap).
-`simulator/report.py` turns a run into six report-ready figures, two of which do
-their own live measurement at report time rather than reading the run's data: a
-microbenchmark of the as-specified vs. hardened HMAC cost, and a fresh, live
-`scyther` subprocess run per model.
-
-Run it:
-```bash
-python3 -m simulator.netsim --n-clients 40 --n-attackers 10 --max-clients 35 --duration 20
-python3 -m simulator.report simulator/results/<timestamp>/
-```
-Figures land in `simulator/results/<timestamp>/figures/`. `python3 -m simulator.netsim --help`
-lists every tunable (client count, link-condition mix, attacker behaviour mix, rate-limit
-caps, simulated duration, real-time pacing factor).
 
 ## 2. Findings from the reproduction (relevant to SAF-SP)
 
@@ -233,15 +195,13 @@ saf_project/
 │   ├── ascon_enc.py
 │   ├── gateway.py
 │   ├── client.py
-│   ├── telemetry.py           # real-time event bus (gateway/client -> dashboard/simulator)
-│   └── runtime_verifier.py    # live per-message property checker, the dashboard's "Scyther node"
+│   ├── telemetry.py           # real-time event bus (gateway/client -> dashboard)
+│   └── runtime_verifier.py    # live per-message property checker; not currently wired
+│                               # into the dashboard (see §1.4) -- kept as reference for
+│                               # SAF-SP work that wants to re-attach live verification
 ├── dashboard/
 │   ├── server.py               # FastAPI + WebSocket backend
 │   └── static/index.html       # topology view, live data panel, attack controls
-├── simulator/
-│   ├── netsim.py                # SimPy real-time multi-client network simulation
-│   ├── report.py                # turns a run into report figures
-│   └── results/<timestamp>/     # events.json, metrics.json, figures/ (generated, gitignored)
 ├── tests/
 │   ├── demo_normal_flow.py
 │   ├── attack_replay.py
@@ -251,16 +211,16 @@ saf_project/
 │   ├── bin/scyther-mac
 │   ├── saf_phase1.spdl
 │   ├── saf_phase2.spdl
-│   └── saf_phase2_hardened_final.spdl
+│   ├── saf_phase2_hardened_final.spdl
+│   └── verify.sh                # runs the all-green models, formatted (§1.3)
 ├── requirements.txt
 └── mosquitto_conf/mosquitto.conf
 ```
 
 ## 5. Setup on macOS (Apple Silicon / M-series)
-Every dependency here (`paho-mqtt`, `ascon`, `numpy`, `scipy`, `matplotlib`, `simpy`,
-`fastapi`, `uvicorn`) is pure-Python/pip-installable — nothing needs to be compiled,
-and `scyther/bin/scyther-mac` is already a native Apple Silicon binary. Only Mosquitto
-itself comes from Homebrew:
+Every dependency here (`paho-mqtt`, `ascon`, `fastapi`, `uvicorn`) is pure-Python/
+pip-installable — nothing needs to be compiled, and `scyther/bin/scyther-mac` is
+already a native Apple Silicon binary. Only Mosquitto itself comes from Homebrew:
 ```bash
 brew install mosquitto        # or: ./setup.sh, which detects macOS and does this for you
 python3 -m venv venv && source venv/bin/activate
@@ -268,11 +228,11 @@ pip install -r requirements.txt
 
 ./run_all.sh                          # CLI demo + attack tests
 python3 -m dashboard.server           # live dashboard -> http://127.0.0.1:8000
-python3 -m simulator.netsim && python3 -m simulator.report simulator/results/<timestamp>/
+./scyther/verify.sh                   # formal verification, all-green models
 ```
-`dashboard/server.py` and `simulator/netsim.py` both auto-detect and start Mosquitto
-from `mosquitto_conf/mosquitto.conf` if nothing is already listening on `127.0.0.1:1883`,
-so no separate terminal/step is required for the broker.
+`dashboard/server.py` auto-detects and starts Mosquitto from `mosquitto_conf/mosquitto.conf`
+if nothing is already listening on `127.0.0.1:1883`, so no separate terminal/step is
+required for the broker.
 
 ## 6. Next steps (SAF-SP)
 1. **Pillar 1 (Sequence-Aware):** extend `alpha`'s HMAC input with a session
@@ -283,6 +243,8 @@ so no separate terminal/step is required for the broker.
    entropy/MI analysis via SciPy/NumPy.
 3. Re-run the Scyther models for SAF-SP's modified Phase 2 to confirm the new
    design doesn't reintroduce any of the gaps found here.
-4. Extend `saf/runtime_verifier.py` and the dashboard/simulator to reflect SAF-SP's
-   hardened Phase 2 once implemented, so the same live-verification story carries
-   forward rather than needing to be rebuilt.
+4. `saf/runtime_verifier.py` already implements a live, per-message reproduction of
+   the same five Scyther properties; it isn't currently wired into the dashboard
+   (see §1.4), but re-attaching it once SAF-SP's hardened Phase 2 is implemented
+   would let the same live-verification story carry forward rather than needing to
+   be rebuilt.

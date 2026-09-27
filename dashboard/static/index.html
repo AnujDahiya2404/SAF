@@ -104,6 +104,7 @@
   .note{grid-column:1/4;text-align:center;font-family:var(--mono);font-size:9.5px;color:var(--dim);
         padding:4px 0}
   .note b{color:var(--text);font-weight:600}
+  .task-sep{height:0;margin:10px 0;border-top:1px dotted var(--line-strong)}
 </style>
 </head>
 <body>
@@ -321,6 +322,14 @@ function addArrow(semanticDir, role, label, detail, color) {
       <div class="lbl">${label}</div><div class="line"></div><div class="detail">${detail}</div>
     </div></div>`);
 }
+function addSeparator() {
+  // A dotted rule spanning the full width, marking the boundary between one
+  // task (a registration, a publish, a subscribe) and the next -- skipped
+  // before the very first row, since there's nothing yet to separate from.
+  const rows = $("seqRows");
+  if (rows.children.length === 0) return;
+  addRow(`<div class="task-sep"></div>`);
+}
 function addNote(text) {
   addRow(`<div class="row"><div class="note"><b>store</b> ${text}</div></div>`);
 }
@@ -356,6 +365,7 @@ function handleEvent(evt) {
     case "phase1_request_sent": {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
+      addSeparator(); // start of a new task: this client's registration
       flow(role || "publisher", "broker", "#2563eb");
       addArrow("toBroker", role, "PreSessionRequest", `client_id=${d.client_id}`, "#2563eb");
       break;
@@ -368,6 +378,7 @@ function handleEvent(evt) {
       const role = roles.publisher.clientId === d.client_id ? "publisher"
                   : roles.subscriber.clientId === d.client_id ? "subscriber" : null;
       if (!role) break;
+      addSeparator(); // start of a new task: this publish/subscribe attempt
       flow(role, "broker", "#2563eb");
       addArrow("toBroker", role, "SessionInitiate", `intent=${d.intent} topic=${d.topic}`, "#2563eb");
       break;
