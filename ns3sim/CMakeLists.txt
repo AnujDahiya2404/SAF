@@ -27,6 +27,13 @@ pkg_check_modules(NS3 REQUIRED
 )
 find_package(OpenSSL REQUIRED)
 find_package(nlohmann_json 3.9 REQUIRED)
+# Some ns-3 packages (e.g. Homebrew's, which depends on open-mpi) are built
+# with MPI support, and their exported library list then names the
+# MPI::MPI_CXX imported target -- even though this project never calls
+# into MPI itself. Not REQUIRED: on builds without MPI support (e.g. the
+# apt libns3-dev package used in CI/this repo's dev container) NS3_LIBRARIES
+# never references it, so nothing below needs the target to exist.
+find_package(MPI COMPONENTS CXX)
 
 add_executable(saf-ns3-sim
   src/saf-crypto.cc
