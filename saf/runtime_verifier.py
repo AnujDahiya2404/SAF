@@ -145,6 +145,7 @@ class RuntimeVerifier:
         t_msg = req_d["t_msg"]
         counter_used = req_d["counter_used"]
         topic = req_d.get("topic", "")
+        intent = req_d.get("intent", "publish")
         tampered = bool(req_d.get("tampered", False))
         replayed = bool(req_d.get("replayed", False))
         approved = status_d["status"] == "Approved"
@@ -191,6 +192,7 @@ class RuntimeVerifier:
             identifier_msg=identifier_msg,
             t_msg=t_msg,
             counter_used=counter_used,
+            intent=intent,
             status=status_d["status"],
             alpha_hex=alpha_hex,
             alpha_matches_expected_hmac=alpha_matches,
