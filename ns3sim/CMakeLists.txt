@@ -10,7 +10,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(saf_ns3_sim CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+# ns-3 3.48's own headers (Homebrew's version) use C++20 features
+# (std::remove_cvref_t, std::strong_ordering / the <=> operator,
+# std::bind_front) -- confirmed directly from a real build's compiler
+# errors. The older 3.41 this project was first built against (apt's
+# libns3-dev) apparently didn't need it, but nothing in this project's
+# own sources is C++20-specific, so raising the standard is a safe
+# superset bump, not a real behavior change.
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
