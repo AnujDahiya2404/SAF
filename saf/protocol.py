@@ -95,6 +95,48 @@ class PreSessionAck:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class SessionInitiate:
+    """Algorithm 2, Step 2 ("The MQTT client initiates a session to
+    either publish data or subscribe to a topic") / Fig. 3, arrow 2
+    ("Sends a request to publish data or subscribe to a topic"): the
+    client's opening move for a Phase-2 exchange, sent before any HMAC
+    material is computed. Carries no security-relevant fields -- the
+    actual authentication challenge is still Steps 4-6
+    (PublishRequest/SubscribeRequest -> VerificationStatus, handled by
+    SAFGateway._verify_and_approve exactly as before); this message and
+    Level1InfoRequest below are purely the session-initiation handshake
+    Fig. 3 draws as two separate arrows ahead of it."""
+    client_id: str
+    intent: str   # "publish" | "subscribe"
+    topic: str
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
+
+    @staticmethod
+    def from_json(payload: str) -> "SessionInitiate":
+        d = json.loads(payload)
+        return SessionInitiate(**d)
+
+
+@dataclass
+class Level1InfoRequest:
+    """Algorithm 2, Step 3 ("The MQTT broker requests the client state
+    and Level 1 information from the MQTT client") / Fig. 3, arrow 3
+    ("Requests for level 1 information"): the broker's reply to
+    SessionInitiate, prompting the client to proceed with Step 4."""
+    client_id: str
+
+    def to_json(self) -> str:
+        return json.dumps(asdict(self))
+
+    @staticmethod
+    def from_json(payload: str) -> "Level1InfoRequest":
+        d = json.loads(payload)
+        return Level1InfoRequest(**d)
+
+
+@dataclass
 class PublishRequest:
     """Algorithm 2, Steps 1-4: client sends alpha (HMAC), t_msg,
     identifier_msg, plus the Level-1 info and the actual MQTT
@@ -166,6 +208,10 @@ class VerificationStatus:
 
 TOPIC_PRESESSION_REQUEST = "saf/presession/request"
 TOPIC_PRESESSION_RESPONSE_FMT = "saf/presession/response/{client_id}"
+TOPIC_PRESESSION_ACK_FMT = "saf/presession/response/{client_id}/ack"
+TOPIC_PRESESSION_ACK_WILDCARD = "saf/presession/response/+/ack"
+TOPIC_SESSION_INITIATE = "saf/session/initiate"
+TOPIC_LEVEL1_REQUEST_FMT = "saf/session/level1request/{client_id}"
 TOPIC_SESSION_PUBLISH = "saf/session/publish"
 TOPIC_SESSION_SUBSCRIBE = "saf/session/subscribe"
 TOPIC_SESSION_STATUS_FMT = "saf/session/status/{client_id}"

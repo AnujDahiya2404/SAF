@@ -57,6 +57,7 @@ class SAFClient:
 
         self._presession_q: "queue.Queue" = queue.Queue()
         self._status_q: "queue.Queue" = queue.Queue()
+        self._level1_q: "queue.Queue" = queue.Queue()
 
     # ------------------------------------------------------------------ #
 
@@ -77,12 +78,17 @@ class SAFClient:
         client.subscribe(
             proto.TOPIC_SESSION_STATUS_FMT.format(client_id=self.client_id), qos=1
         )
+        client.subscribe(
+            proto.TOPIC_LEVEL1_REQUEST_FMT.format(client_id=self.client_id), qos=1
+        )
 
     def _on_message(self, client, userdata, msg):
         if msg.topic == proto.TOPIC_PRESESSION_RESPONSE_FMT.format(client_id=self.client_id):
             self._presession_q.put(msg.payload.decode("utf-8"))
         elif msg.topic == proto.TOPIC_SESSION_STATUS_FMT.format(client_id=self.client_id):
             self._status_q.put(msg.payload.decode("utf-8"))
+        elif msg.topic == proto.TOPIC_LEVEL1_REQUEST_FMT.format(client_id=self.client_id):
+            self._level1_q.put(msg.payload.decode("utf-8"))
         elif msg.topic.startswith(proto.APP_TOPIC_PREFIX):
             # relayed application data on a topic this client was SAF-approved
             # to subscribe to (see subscribe()) -- delivered here by Mosquitto's
@@ -123,21 +129,50 @@ class SAFClient:
         self.session_time = resp.session_time
         self.last_session_time = resp.session_time
         self.registered = True
-
-        # Step 8: client sends ack
-        ack = proto.PreSessionAck(client_id=self.client_id)
-        self._mqtt.publish(
-            proto.TOPIC_PRESESSION_RESPONSE_FMT.format(client_id=self.client_id) + "/ack",
-            ack.to_json(), qos=1,
-        )
         self.log.info(f"[Phase1] client-state established, x={self.x.hex()[:16]}..., "
                        f"k={self.k.hex()[:16]}..., c={self.c}")
         telemetry_bus.publish(f"client:{self.client_id}", "phase1_established",
                                client_id=self.client_id, x_hex=self.x.hex(),
                                k_hex=self.k.hex(), c=self.c, session_time=self.session_time)
+
+        # Step 8: client sends ack (Fig. 2, arrow 8: "Sends ack") -- fired
+        # after phase1_established above so the two telemetry events reach
+        # the dashboard in the same order the real messages did: the client
+        # only has something to ack once it has actually stored x/k/c.
+        ack = proto.PreSessionAck(client_id=self.client_id)
+        self._mqtt.publish(
+            proto.TOPIC_PRESESSION_ACK_FMT.format(client_id=self.client_id),
+            ack.to_json(), qos=1,
+        )
+        self.log.info(f"[Phase1] sent ack={ack.ack}")
+        telemetry_bus.publish(f"client:{self.client_id}", "phase1_ack_sent",
+                               client_id=self.client_id, ack=ack.ack)
         return True
 
     # ---------------------- Phase 2: In-Session (Algorithm 2) ---------------------- #
+
+    def _initiate_session(self, intent: str, topic: str, timeout: float) -> bool:
+        """Steps 2-3 (Fig. 3, arrows 2-3: "Sends a request to publish data
+        or subscribe to a topic" / "Requests for level 1 information") --
+        a handshake exchanged before any HMAC material is computed. It
+        carries no security-relevant fields, and SAFGateway's actual
+        verification (Steps 4-6, in _verify_and_approve) doesn't require
+        it to have happened first (see gateway.py) -- so it cannot be used
+        to bypass or weaken the HMAC check that follows it. Shared by
+        publish() and subscribe()."""
+        init = proto.SessionInitiate(client_id=self.client_id, intent=intent, topic=topic)
+        self._mqtt.publish(proto.TOPIC_SESSION_INITIATE, init.to_json(), qos=1)
+        self.log.info(f"[Phase2] sent session-initiate intent={intent} topic={topic}")
+        telemetry_bus.publish(f"client:{self.client_id}", "phase2_session_initiated",
+                               client_id=self.client_id, intent=intent, topic=topic)
+        try:
+            self._level1_q.get(timeout=timeout)
+        except queue.Empty:
+            self.log.error("[Phase2] timed out waiting for Level1InfoRequest")
+            telemetry_bus.publish(f"client:{self.client_id}", "phase2_timeout",
+                                   client_id=self.client_id, identifier_msg=None, intent=intent)
+            return False
+        return True
 
     def publish(self, topic: str, payload: bytes, encrypt: bool = False,
                 timeout: float = 5.0, tamper_alpha: bool = False,
@@ -153,6 +188,10 @@ class SAFClient:
 
         # Step 1: determine Level-1 information
         level1_info = self.last_session_time or self.session_time
+
+        # Steps 2-3: session-initiation handshake (Fig. 3)
+        if not self._initiate_session("publish", topic, timeout):
+            return None
 
         t_msg = cu.current_timestamp()
         identifier_msg = replay_identifier or cu.new_message_identifier()
@@ -200,6 +239,11 @@ class SAFClient:
             raise RuntimeError("client must complete Phase 1 (register()) before subscribing")
 
         level1_info = self.last_session_time or self.session_time
+
+        # Steps 2-3: session-initiation handshake (Fig. 3)
+        if not self._initiate_session("subscribe", topic, timeout):
+            return None
+
         t_msg = cu.current_timestamp()
         identifier_msg = cu.new_message_identifier()
         alpha = cu.compute_alpha(self.k, self.x, self.c)

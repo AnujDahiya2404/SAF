@@ -66,6 +66,8 @@ class SAFGateway:
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         log.info(f"connected to broker rc={rc}")
         client.subscribe(proto.TOPIC_PRESESSION_REQUEST, qos=1)
+        client.subscribe(proto.TOPIC_PRESESSION_ACK_WILDCARD, qos=1)
+        client.subscribe(proto.TOPIC_SESSION_INITIATE, qos=1)
         client.subscribe(proto.TOPIC_SESSION_PUBLISH, qos=1)
         client.subscribe(proto.TOPIC_SESSION_SUBSCRIBE, qos=1)
 
@@ -73,6 +75,10 @@ class SAFGateway:
         try:
             if msg.topic == proto.TOPIC_PRESESSION_REQUEST:
                 self._handle_presession_request(msg.payload.decode("utf-8"))
+            elif msg.topic.endswith("/ack") and msg.topic.startswith("saf/presession/response/"):
+                self._handle_presession_ack(msg.payload.decode("utf-8"))
+            elif msg.topic == proto.TOPIC_SESSION_INITIATE:
+                self._handle_session_initiate(msg.payload.decode("utf-8"))
             elif msg.topic == proto.TOPIC_SESSION_PUBLISH:
                 self._handle_session_publish(msg.payload.decode("utf-8"))
             elif msg.topic == proto.TOPIC_SESSION_SUBSCRIBE:
@@ -151,7 +157,35 @@ class SAFGateway:
         # non-empty, reasonably-shaped identifier.
         return bool(client_id) and len(client_id) <= 128
 
+    def _handle_presession_ack(self, payload: str):
+        """Algorithm 1, Step 8 ("The MQTT client sends ack back to the
+        MQTT broker to confirm receipt") / Fig. 2, arrow 8. Purely a
+        confirmation -- registration is already complete once
+        _handle_presession_request sent y=x||k||c; nothing further to
+        verify or approve here."""
+        ack = proto.PreSessionAck.from_json(payload)
+        log.info(f"[Phase1] received ack from {ack.client_id}")
+        telemetry_bus.publish("gateway", "phase1_ack_received", client_id=ack.client_id)
+
     # ---------------------- Phase 2: In-Session (Algorithm 2) ---------------------- #
+
+    def _handle_session_initiate(self, payload: str):
+        """Algorithm 2, Step 3 ("The MQTT broker requests the client state
+        and Level 1 information from the MQTT client") / Fig. 3, arrow 3
+        ("Requests for level 1 information"): reply to a SessionInitiate
+        with a Level1InfoRequest, prompting the client to proceed with
+        Step 4. This handshake carries no security-relevant data and
+        doesn't gate _verify_and_approve() below -- a client (or test)
+        that sends a PublishRequest/SubscribeRequest without it first is
+        still verified exactly the same way."""
+        req = proto.SessionInitiate.from_json(payload)
+        log.info(f"[Phase2] session-initiate from {req.client_id} intent={req.intent} topic={req.topic}")
+        telemetry_bus.publish("gateway", "phase2_session_initiate_received",
+                               client_id=req.client_id, intent=req.intent, topic=req.topic)
+        resp = proto.Level1InfoRequest(client_id=req.client_id)
+        topic = proto.TOPIC_LEVEL1_REQUEST_FMT.format(client_id=req.client_id)
+        self.client.publish(topic, resp.to_json(), qos=1)
+        telemetry_bus.publish("gateway", "phase2_level1_requested", client_id=req.client_id)
 
     def _handle_session_publish(self, payload: str):
         req = proto.PublishRequest.from_json(payload)

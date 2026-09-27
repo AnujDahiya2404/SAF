@@ -4,21 +4,25 @@ dashboard/server.py
 Live web dashboard for the SAF reference implementation. Every number this
 serves is produced by the real, unmodified protocol code in saf/ (real
 Mosquitto broker, real SAFGateway, real SAFClient, real HMAC/ASCON crypto)
-via the telemetry bus (saf/telemetry.py) and the runtime verifier
-(saf/runtime_verifier.py) that live-checks each real exchange.
+via the telemetry bus (saf/telemetry.py).
 
-This dashboard deliberately does not shell out to the Scyther binary: the
-.spdl models in scyther/ are pre-made, static models, not something this
-simulation generates, so "running Scyther" here would just replay a fixed,
-already-documented result (see README.md section 1.3) rather than show
-anything live. This phase implements the base paper only -- every publish
-and subscribe uses Algorithm 2 exactly as specified (alpha = HMAC_k(x||c)),
-so saf/runtime_verifier.py's live Niagree/Nisynch check correctly and
-reproducibly comes back red on every exchange, matching
-scyther/saf_phase2.spdl's real (static) result. The hardened binding that
-fixes this is documented in README.md section 2 and verified in
-scyther/saf_phase2_hardened_final.spdl, but isn't wired into any running
-code in this phase -- that's SAF-SP extension work.
+This dashboard has no Scyther-derived verdict anywhere in it (no per-message
+LEDs, no "gap" coloring) -- Scyther is a static, offline model checker, not
+something that can observe *this specific* live message, and showing its
+static .spdl results next to a live per-message trace made it look like a
+per-message verdict, which it never was. The real, formal Scyther results
+(matching Fig. 5/6 of the paper, verified independently by the actual
+scyther-linux/-mac binary against saf_phase1.spdl and
+saf_phase2_hardened_final.spdl) are available on demand instead: run
+
+    ./scyther/verify.sh
+
+from the repo root -- prints both models' claims, all green, straight from
+a real Scyther run. See README.md sections 1.3/2 for the full picture,
+including saf_phase2.spdl's real (and correctly red) result for Algorithm 2
+exactly as the base paper specifies it -- that model is intentionally left
+out of verify.sh since its purpose is documenting a gap, not demonstrating
+success.
 
 Run (after `pip install fastapi "uvicorn[standard]"` and starting/allowing
 this to start a local Mosquitto broker on 127.0.0.1:1883):
@@ -49,7 +53,6 @@ from saf.gateway import SAFGateway  # noqa: E402
 from saf.client import SAFClient  # noqa: E402
 from saf.state_store import SAFStateStore  # noqa: E402
 from saf.telemetry import bus  # noqa: E402
-from saf import runtime_verifier  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("saf.dashboard")
@@ -104,7 +107,6 @@ def _ensure_broker_running() -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     _ensure_broker_running()
-    runtime_verifier.ensure_running(bus=bus)
     store = SAFStateStore()
     gw = SAFGateway(host=BROKER_HOST, port=BROKER_PORT, store=store)
     gw.start()
