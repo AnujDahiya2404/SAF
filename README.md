@@ -143,6 +143,33 @@ python3 -m dashboard.server        # starts mosquitto (if not already running) +
 ```
 Then open **http://127.0.0.1:8000/**.
 
+### 1.5 ns-3 network simulation (`ns3sim/`)
+A real ns-3 simulation of Algorithm 1/2 at scale (tens of clients, real
+per-link delay/loss profiles, ns-3's own `FlowMonitor` for real packet-level
+latency/throughput/loss) -- the "how does this behave under real network
+conditions" complement to the single-client dashboard above. See
+`ns3sim/README.md` for the full picture, summarised here.
+
+**Why C++, and how it's kept honest:** ns-3 has no native MQTT support and is
+C++-only, so this is a **second implementation** of the protocol
+(`ns3sim/src/`), not the literal Python code `scyther/` verified and
+`tests/` exercises. Two things keep that honest: `ns3sim/tools/crosscheck_hmac.{cc,py}`
+runs the same fixed vectors through both implementations' HMAC and proves
+them byte-identical, and the simulated client roles reproduce the exact
+same attack scenarios `tests/attack_*.py` run against the real
+implementation (tampered HMAC, replayed identifier, never-registered
+client), producing the exact same denial-reason strings `saf/gateway.py`
+returns.
+
+Run it:
+```bash
+sudo apt-get install libns3-dev libns3.41t64 libgsl-dev libssl-dev nlohmann-json3-dev cmake g++
+./ns3sim/run.sh                                       # build (if needed) + run with defaults
+./ns3sim/run.sh --nPublishers=40 --nSubscribers=15 --duration=60
+```
+Results (broker decision log, per-client events, and ns-3's real flow
+metrics) land in `ns3sim/build/ns3sim-results.json`.
+
 ## 2. Findings from the reproduction (relevant to SAF-SP)
 
 Reproducing the paper's own Scyther methodology **more rigorously** (checking
@@ -213,14 +240,19 @@ saf_project/
 │   ├── saf_phase2.spdl
 │   ├── saf_phase2_hardened_final.spdl
 │   └── verify.sh                # runs the all-green models, formatted (§1.3)
+├── ns3sim/                      # ns-3 network simulation (§1.5) -- a second, C++
+│   ├── src/                     # implementation of Algorithm 1/2, cross-checked
+│   ├── tools/crosscheck_hmac.{cc,py}  # against saf/crypto_utils.py by these
+│   ├── CMakeLists.txt
+│   └── run.sh                   # build (if needed) + run
 ├── requirements.txt
 └── mosquitto_conf/mosquitto.conf
 ```
 
 ## 5. Setup on macOS (Apple Silicon / M-series)
-Every dependency here (`paho-mqtt`, `ascon`, `fastapi`, `uvicorn`) is pure-Python/
-pip-installable — nothing needs to be compiled, and `scyther/bin/scyther-mac` is
-already a native Apple Silicon binary. Only Mosquitto itself comes from Homebrew:
+Every Python dependency here (`paho-mqtt`, `ascon`, `fastapi`, `uvicorn`) is
+pure-Python/pip-installable — nothing needs to be compiled, and `scyther/bin/scyther-mac`
+is already a native Apple Silicon binary. Only Mosquitto itself comes from Homebrew:
 ```bash
 brew install mosquitto        # or: ./setup.sh, which detects macOS and does this for you
 python3 -m venv venv && source venv/bin/activate
@@ -230,6 +262,10 @@ pip install -r requirements.txt
 python3 -m dashboard.server           # live dashboard -> http://127.0.0.1:8000
 ./scyther/verify.sh                   # formal verification, all-green models
 ```
+`ns3sim/` (§1.5) is a separate C++ subproject with its own build step --
+see `ns3sim/README.md`'s macOS section (Homebrew's `ns-3` formula, or
+building from the official source tarball; this path is best-effort and
+was validated on Linux only in this session, not on actual macOS).
 `dashboard/server.py` auto-detects and starts Mosquitto from `mosquitto_conf/mosquitto.conf`
 if nothing is already listening on `127.0.0.1:1883`, so no separate terminal/step is
 required for the broker.

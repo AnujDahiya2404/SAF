@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 venv/
 simulator/results/
+ns3sim/build/
+ns3sim/results/
