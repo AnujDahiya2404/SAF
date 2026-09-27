@@ -20,7 +20,10 @@ TypeId SafBrokerApp::GetTypeId() {
 SafBrokerApp::SafBrokerApp() = default;
 SafBrokerApp::~SafBrokerApp() = default;
 
-void SafBrokerApp::Setup(uint16_t port) { m_port = port; }
+void SafBrokerApp::Setup(uint16_t port, size_t maxClients) {
+  m_port = port;
+  m_store = SafStateStore(maxClients);
+}
 
 void SafBrokerApp::StartApplication() {
   m_listenSocket = Socket::CreateSocket(GetNode(), TcpSocketFactory::GetTypeId());

@@ -71,6 +71,7 @@ int main(int argc, char *argv[]) {
   std::string topic = "sensors/temperature";
   std::string outFile = "ns3sim-results.json";
   uint16_t brokerPort = 9000;
+  uint32_t maxClients = 50;
 
   CommandLine cmd;
   cmd.AddValue("nPublishers", "Number of legitimate publisher clients", nPublishers);
@@ -86,6 +87,10 @@ int main(int argc, char *argv[]) {
   cmd.AddValue("duration", "Simulation duration in seconds", durationSeconds);
   cmd.AddValue("topic", "Shared application topic every client publishes/subscribes to", topic);
   cmd.AddValue("out", "Output JSON summary path", outFile);
+  cmd.AddValue("maxClients", "Broker's Section V-B registration rate-limit cap "
+               "(mirrors saf/state_store.py's SAFStateStore max_clients=50 default) -- "
+               "raise this if nPublishers+nSubscribers+nTamperAttackers+nReplayAttackers "
+               "exceeds it, or some will be correctly denied at registration", maxClients);
   cmd.Parse(argc, argv);
 
   uint32_t nClients = nPublishers + nSubscribers + nTamperAttackers + nReplayAttackers +
@@ -101,7 +106,7 @@ int main(int argc, char *argv[]) {
   stack.Install(clientNodes);
 
   Ptr<SafBrokerApp> brokerApp = CreateObject<SafBrokerApp>();
-  brokerApp->Setup(brokerPort);
+  brokerApp->Setup(brokerPort, maxClients);
   brokerNode.Get(0)->AddApplication(brokerApp);
   brokerApp->SetStartTime(Seconds(0.0));
   brokerApp->SetStopTime(Seconds(durationSeconds));
@@ -221,6 +226,7 @@ int main(int argc, char *argv[]) {
         {"n_tamper_attackers", nTamperAttackers},
         {"n_replay_attackers", nReplayAttackers},
         {"n_ghost_attackers", nGhostAttackers},
+        {"max_clients", maxClients},
         {"topic", topic},
         {"duration_seconds", durationSeconds}}},
       {"broker_stats",
@@ -246,6 +252,7 @@ int main(int argc, char *argv[]) {
   std::cout << "clients: " << nClients << " (pub=" << nPublishers << " sub=" << nSubscribers
             << " tamper=" << nTamperAttackers << " replay=" << nReplayAttackers
             << " ghost=" << nGhostAttackers << ")\n";
+  std::cout << "registration rate-limit cap (--maxClients): " << maxClients << "\n";
   std::cout << "presession established/denied: " << st.presession_established << "/"
             << st.presession_denied << "\n";
   std::cout << "phase2 approved/denied: " << st.phase2_approved << "/" << st.phase2_denied

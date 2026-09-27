@@ -94,23 +94,40 @@ sudo apt-get install libns3-dev libns3.41t64 libgsl-dev libssl-dev nlohmann-json
 ```
 
 ### macOS (Apple Silicon incl. M-series)
-ns-3 doesn't ship macOS binaries; Homebrew has a community `ns-3` formula
-that builds it from source. This path is **best-effort and untested in
-this session** (built and validated on Linux only) -- if a Homebrew ns-3
-package isn't available or current on your machine, see
-[the ns-3 wiki's macOS build notes](https://www.nsnam.org/docs/installation/html/) for building
-from the official source tarball instead (`./ns3 configure`, `./ns3
-build`, both of which work on Apple Silicon).
+Confirmed working on a real M3 MacBook (macOS, Apple Silicon) via
+Homebrew's `ns-3` formula (installs ns-3.48 with prebuilt arm64 bottles --
+no source build needed):
 ```bash
-brew install ns-3 openssl nlohmann-json cmake   # if the ns-3 formula is available
+xcode-select --install                          # if not already installed
+brew install ns-3 openssl nlohmann-json cmake
+export PKG_CONFIG_PATH="$(brew --prefix ns-3)/lib/pkgconfig:$PKG_CONFIG_PATH"
 ./ns3sim/run.sh
 ```
-If Homebrew's ns-3 doesn't expose `pkg-config` files the way the apt
-package does, point CMake at wherever it installed instead:
+Three real issues turned up getting an actual M3 build green, all now
+fixed in `CMakeLists.txt` and confirmed not to affect the Linux build:
+1. Homebrew's ns-3 depends on `open-mpi` and is built with MPI support,
+   so its exported library list names the `MPI::MPI_CXX` CMake target --
+   resolved with `find_package(MPI COMPONENTS CXX)`.
+2. That same build's `.pc` files (e.g. `ns3-core.pc`) contain a literal
+   `-linterface_libs-NOTFOUND` token -- an unresolved CMake variable
+   baked in at ns-3's own build time (an upstream packaging bug, not
+   something on our end). Filtered out with `list(FILTER NS3_LIBRARIES
+   EXCLUDE REGEX ".*-NOTFOUND$")`.
+3. ns-3 3.48's headers use C++20 (`std::strong_ordering`, the `<=>`
+   operator, `std::remove_cvref_t`) -- `CMAKE_CXX_STANDARD` raised from
+   17 to 20.
+
+If `PKG_CONFIG_PATH` still doesn't find the modules, or a Homebrew update
+changes the formula's layout entirely, point CMake at the prefix directly:
 ```bash
 cmake -S ns3sim -B ns3sim/build -DCMAKE_PREFIX_PATH=$(brew --prefix ns-3)
 cmake --build ns3sim/build
 ```
+If a Homebrew `ns-3` package isn't available at all, see
+[the ns-3 wiki's macOS build notes](https://www.nsnam.org/docs/installation/html/)
+for building from the official source tarball instead (`./ns3 configure`,
+`./ns3 build`, both of which work on Apple Silicon) -- untested in this
+session, since the Homebrew path worked.
 
 ## Run
 ```bash
@@ -119,5 +136,21 @@ cmake --build ns3sim/build
 ./ns3sim/run.sh --rebuild                                  # force a clean reconfigure+rebuild first
 cd ns3sim/build && ./saf-ns3-sim --help                    # every tunable (client counts, topic, intervals, ...)
 ```
-Results land at `ns3sim/build/ns3sim-results.json` (or wherever `--out`
-points), gitignored like `simulator/results/` used to be.
+
+**Registration rate limit:** the broker's `--maxClients` (default 50)
+mirrors `saf/state_store.py`'s own `SAFStateStore(max_clients=50)`
+default -- Section V-B's real rate-limiting policy, not a simulator
+limitation. If `nPublishers + nSubscribers + nTamperAttackers +
+nReplayAttackers` (ghost attackers skip registration, so they don't
+count) exceeds it, the excess are correctly `Denied` at Phase 1, exactly
+as the real broker would. Raise the cap explicitly for larger runs:
+```bash
+./ns3sim/run.sh --nPublishers=40 --nSubscribers=15 --maxClients=70 --duration=60
+```
+
+**Results**: land at `ns3sim/build/ns3sim-results.json` by default (i.e.
+directly inside the `ns3sim/build/` directory `run.sh` builds in) --
+`cat ns3sim/build/ns3sim-results.json | python3 -m json.tool` to browse
+it, or pass `--out=/some/other/path.json` to write somewhere else. The
+whole `ns3sim/build/` directory (binaries and results alike) is
+gitignored, same as `simulator/results/` used to be.

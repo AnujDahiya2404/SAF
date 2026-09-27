@@ -58,7 +58,11 @@ class SafBrokerApp : public ns3::Application {
   SafBrokerApp();
   ~SafBrokerApp() override;
 
-  void Setup(uint16_t port);
+  // maxClients mirrors saf/state_store.py's SAFStateStore(max_clients=50)
+  // default -- Section V-B's registration rate limiter. Exposed so a run
+  // simulating more than 50 real clients can raise it explicitly instead
+  // of silently hitting the cap.
+  void Setup(uint16_t port, size_t maxClients = 50);
 
   const BrokerStats &Stats() const { return m_stats; }
   const std::vector<DecisionLogEntry> &DecisionLog() const { return m_log; }

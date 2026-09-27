@@ -263,9 +263,9 @@ python3 -m dashboard.server           # live dashboard -> http://127.0.0.1:8000
 ./scyther/verify.sh                   # formal verification, all-green models
 ```
 `ns3sim/` (§1.5) is a separate C++ subproject with its own build step --
-see `ns3sim/README.md`'s macOS section (Homebrew's `ns-3` formula, or
-building from the official source tarball; this path is best-effort and
-was validated on Linux only in this session, not on actual macOS).
+see `ns3sim/README.md`'s macOS section. Confirmed working end-to-end on
+a real M3 MacBook via Homebrew's `ns-3` formula (`brew install ns-3`,
+prebuilt arm64 bottle, no source build needed).
 `dashboard/server.py` auto-detects and starts Mosquitto from `mosquitto_conf/mosquitto.conf`
 if nothing is already listening on `127.0.0.1:1883`, so no separate terminal/step is
 required for the broker.
